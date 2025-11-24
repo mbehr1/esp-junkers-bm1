@@ -1,3 +1,12 @@
+// Todos:
+// [] add console commands for i2c read/write of pcf8570 ram
+// [] add i2c slave device emulating the junkers bm1 pcf8570 ram
+// [] add websocket server for communication with others e.g. esp32-heating-junkers
+// [] add defmt_via_tcp.rs for logging to remote-defmt-srv
+// [] refactor ota to standalone crate
+// [] refactor defmt_via_tcp to standalone crate
+// [x] add console to interact (reset, overwrite, read/write)
+
 #![no_std]
 #![no_main]
 #![deny(
@@ -14,7 +23,7 @@ use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_radio::wifi::{ClientConfig, ModeConfig, WifiController, WifiDevice, WifiError};
 use panic_rtt_target as _;
 
-use esp_junkers_bm1::ota::ota_task;
+use esp_junkers_bm1::{console::console_task, ota::ota_task};
 
 extern crate alloc;
 
@@ -128,12 +137,13 @@ async fn main(spawner: Spawner) -> ! {
         net_seed,
     );
 
-    // spawn the OTA task:
+    // spawn the tasks:
     let flash = esp_storage::FlashStorage::new(peripherals.FLASH);
     let sha = esp_hal::sha::Sha::new(peripherals.SHA);
     spawner.spawn(connection(wifi_controller)).unwrap();
     spawner.spawn(net_task(runner)).unwrap();
     spawner.spawn(ota_task(stack, flash, sha)).unwrap();
+    spawner.spawn(console_task(stack)).unwrap();
 
     info!(
         "Free heap before main loop: {} bytes",

@@ -21,6 +21,7 @@ embassy-net = { version = "0.7.1", features = [
   "tcp",
   "udp",
 ] }
+embassy-sync = { version = "0.6.2", features = ["defmt"] } # 0.6.2 is required by nostd-interactive-terminal. should be 0.7.2
 embassy-time = { version = "0.5.0", features = ["defmt"] }
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
@@ -36,7 +37,8 @@ esp-rtos = { version = "0.2.0", features = [
   "esp32c6",
 ] }
 esp-storage = {version = "0.8.1", features = ["defmt", "esp32c6"] }
-
+heapless = {version = "0.9.2", features = ["defmt"] }
+nostd-interactive-terminal = { version="0.1.1", features=["ansi-support"] }
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
 rtt-target = { version = "0.6.2", features = ["defmt"] }
 # for more networking protocol support see https://crates.io/crates/edge-net
