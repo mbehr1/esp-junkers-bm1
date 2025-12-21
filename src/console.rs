@@ -36,10 +36,20 @@ pub async fn console_task(stack: Stack<'static>) {
         match acc {
             Ok(()) => {
                 info!("Console client connected!");
-                let _ = handle_client(&mut server).await;
+                let exit_reason = handle_client(&mut server).await;
                 let _ = server.flush().await;
                 server.abort();
-                info!("Console client disconnected!");
+                match exit_reason {
+                    Ok(ExitReason::Restart) => {
+                        info!("Console requested system restart!");
+                        Timer::after(Duration::from_secs(1)).await;
+                        esp_hal::system::software_reset();
+                    }
+                    Ok(ExitReason::Disconnected) => {
+                        info!("Console client disconnected!");
+                    }
+                    _ => {}
+                }
             }
             Err(e) => {
                 info!("Console server accept error: {:?}", e);
@@ -51,7 +61,13 @@ pub async fn console_task(stack: Stack<'static>) {
 
 // MARK: nostd_interactive_terminal client handler
 
-async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<(), embassy_net::tcp::Error> {
+enum ExitReason {
+    Disconnected,
+    Exit,
+    Restart,
+}
+
+async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy_net::tcp::Error> {
     let (mut rx, mut tx) = socket.split();
 
     let config = TerminalConfig {
@@ -99,12 +115,18 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<(), embassy_net::tc
                         writer
                             .writeln("  info   - Show system information\r")
                             .await?;
+                        writer.writeln("  restart- Restart the system\r").await?;
                     }
                     "exit" => {
                         writer.writeln("Exiting console...\r").await?;
                         break;
                     }
+                    "restart" => {
+                        writer.writeln("Restarting system...\r").await?;
+                        return Ok(ExitReason::Restart); // caller will handle restart to ensure proper connection close
+                    }
                     "info" => {
+                        let now = esp_hal::time::Instant::now();
                         writer.writeln("System Information:\r").await?;
                         writer.writeln(" Device: esp-junkers-bm1\r").await?;
                         // add heap info:
@@ -124,6 +146,58 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<(), embassy_net::tc
                                         .unwrap_or(
                                             heapless::format!(512;"failed to convert\r\n").unwrap(),
                                         ),
+                                )
+                                .await?;
+                        }
+                        // last boiler state via i2c::BOILER_STATE:
+                        {
+                            use crate::i2c::BOILER_STATE;
+                            let bs = critical_section::with(|cs| {
+                                let ram = BOILER_STATE.borrow_ref(cs);
+                                if let Some((boiler_state, update_instant)) = ram.as_ref() {
+                                    Some((*boiler_state, *update_instant))
+                                } else {
+                                    None
+                                }
+                            });
+                            if let Some((boiler_state, timestamp)) = bs {
+                                let age = now
+                                    .duration_since_epoch()
+                                    .saturating_sub(timestamp.duration_since_epoch());
+                                writer
+                                    .write_info(
+                                        &heapless::format!(
+                                            512;
+                                            " Last boiler state update: {}s ago\r\n  {:?}\r\n",
+                                            age.as_secs(),
+                                            boiler_state
+                                        )
+                                        .unwrap_or_default(),
+                                    )
+                                    .await?;
+                            } else {
+                                writer.write_info(" No boiler state available\r\n").await?;
+                            }
+                        }
+                        // current remote values:
+                        {
+                            use crate::i2c::{
+                                REMOTE_POWER, REMOTE_STOP_PUMP, REMOTE_VL_SOLL2, REMOTE_WW_SOLL2,
+                            };
+                            let power = REMOTE_POWER.load(core::sync::atomic::Ordering::Relaxed);
+                            let vl_soll2 =
+                                REMOTE_VL_SOLL2.load(core::sync::atomic::Ordering::Relaxed);
+                            let ww_soll2 =
+                                REMOTE_WW_SOLL2.load(core::sync::atomic::Ordering::Relaxed);
+                            let stop_pump =
+                                REMOTE_STOP_PUMP.load(core::sync::atomic::Ordering::Relaxed);
+                            writer
+                                .write_info(
+                                    &heapless::format!(256;
+                                        " Remote settings:\r\n  Power: {}\r\n  VL_SOLL2: {} ({}°C)\r\n  WW_SOLL2: {} ({}°C)\r\n  STOP_PUMP: {}\r\n",
+                                        power, vl_soll2, vl_soll2 as f32 * 0.5, ww_soll2, ww_soll2 as f32 * 0.5, stop_pump
+                                    )
+                                    .unwrap_or_default(),
                                 )
                                 .await?;
                         }
@@ -147,11 +221,11 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<(), embassy_net::tc
                 info!("Console client disconnected (read error)");
                 Timer::after(Duration::from_secs(5)).await;
                 // writer.write_error("Error reading line\r\n").await?;
-                break; // TODO exist on error?
+                return Ok(ExitReason::Disconnected);
             }
         }
     }
-    Ok(())
+    Ok(ExitReason::Exit)
 }
 
 struct MyHeapStats(esp_alloc::HeapStats);

@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use defmt::{debug, info, warn};
+use defmt::{debug, error, info, warn};
 use embassy_net::{IpListenEndpoint, Stack, tcp::TcpSocket};
 use embassy_time::{Duration, Timer};
 use embedded_storage::Storage;
@@ -30,8 +30,13 @@ pub async fn ota_task(
     Timer::after(Duration::from_secs(5)).await;
     let mut buffer =
         alloc::boxed::Box::new([0u8; esp_bootloader_esp_idf::partitions::PARTITION_TABLE_MAX_LEN]); // TODO optimize to only load once needed!
-    let mut ota =
-        esp_bootloader_esp_idf::ota_updater::OtaUpdater::new(&mut flash, buffer.as_mut()).unwrap();
+    let ota = esp_bootloader_esp_idf::ota_updater::OtaUpdater::new(&mut flash, buffer.as_mut()); //.unwrap(); seems to fail with debugger attached?
+
+    if ota.is_err() {
+        error!("Failed to initialize OTA updater!");
+        return;
+    }
+    let mut ota = ota.unwrap();
 
     current_ota_state(&mut ota);
 
