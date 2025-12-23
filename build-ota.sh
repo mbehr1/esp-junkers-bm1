@@ -6,7 +6,7 @@ proj_name=$(basename "$PWD")
 cargo build --release
 build_path=$(cargo build --release --message-format=json | jq -r ".executable | select(type==\"string\")")
 echo "Build path: $build_path"
-espflash save-image --chip esp32c6 -s 8mb \
+espflash save-image --chip esp32c6 -s 4mb \
   $build_path \
   $proj_name.ota
 

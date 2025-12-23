@@ -17,7 +17,7 @@ extern crate alloc;
 ///
 /// The image can be generated using:
 /// ```sh
-/// espflash save-image --chip esp32c6 -s 8mb target/riscv32imac-unknown-none-elf/release/esp-junkers-bm1 ota_img.bin
+/// espflash save-image --chip esp32c6 -s 4mb target/riscv32imac-unknown-none-elf/release/esp-junkers-bm1 ota_img.bin
 /// ```
 
 // ota update task
@@ -232,9 +232,9 @@ where
         warn!("Invalid image magic");
         return Err(embassy_net::tcp::Error::ConnectionReset);
     }
-    // image for 8mb flash?
-    if esp_image_header.spi_size() != 0x03 {
-        warn!("Invalid image spi size (!= 8MB)");
+    // image for 4mb flash?
+    if esp_image_header.spi_size() != 0x02 {
+        warn!("Invalid image spi size (!= 4MB)");
         return Err(embassy_net::tcp::Error::ConnectionReset);
     }
     // image for ESP32C6?
@@ -265,8 +265,8 @@ where
             part_type, part_size
         );
 
-        if part_size < 2 * 1024 * 1024 {
-            warn!("Partition size too small ({} < 2MB) for image", part_size);
+        if part_size < 0x1e0000 {
+            warn!("Partition size too small ({} < 0x1e0000) for image", part_size);
             return Err(embassy_net::tcp::Error::ConnectionReset);
         }
 

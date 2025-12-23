@@ -200,7 +200,9 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                     )
                                     .await?;
                             } else {
-                                writer.write_warning(" No boiler state available\r\n").await?;
+                                writer
+                                    .write_warning(" No boiler state available\r\n")
+                                    .await?;
                             }
                         }
                         // current remote values:
