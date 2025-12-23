@@ -205,6 +205,34 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                     .await?;
                             }
                         }
+                        // current homematic DEVICES:
+                        {
+                            use crate::homematic::DEVICES;
+                            let mut device_info_str: heapless::String<64> = heapless::String::new();
+                            let mut device_infos: alloc::vec::Vec<heapless::String<128>> =
+                                alloc::vec::Vec::new();
+                            DEVICES.lock(|devices| {
+                                let devices = devices.borrow();
+                                device_info_str = heapless::format!(64; " Homematic devices: {}\r\n", devices.len())
+                                        .unwrap_or_default();
+                                for device in devices.iter() {
+                                    let info_str = heapless::format!(128;
+                                        "   '{}': {}/{}C, valve: {}, {}\r\n",
+                                        device.label,
+                                        device.valve_act_temp,
+                                        device.set_point_temp,
+                                        device.valve_position,
+                                        alloc::string::ToString::to_string(&jiff::Timestamp::from_millisecond(device.last_status_update).unwrap_or_default())
+                                    )
+                                    .unwrap_or_default();
+                                    device_infos.push(info_str);
+                                }
+                            });
+                            writer.write_info(&device_info_str).await?;
+                            for device in device_infos.iter() {
+                                writer.write_info(device).await?;
+                            }
+                        }
                         // current remote values:
                         {
                             use crate::i2c::{

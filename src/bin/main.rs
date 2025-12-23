@@ -1,7 +1,8 @@
 // Todos:
+// [] add regulator for remote target values
 // [] add console commands for i2c read/write of pcf8570 ram
 // [x] add i2c slave device emulating the junkers bm1 pcf8570 ram
-// [] add homematic support
+// [x] add homematic support
 // [x] add defmt_via_tcp.rs for logging to remote-defmt-srv
 // [] refactor ota to standalone crate
 // [] refactor defmt_via_tcp to standalone crate
@@ -15,9 +16,10 @@
     holding buffers for the duration of a data transfer."
 )]
 
+use core::cell::RefCell;
 use defmt::{error, info, warn};
 use embassy_executor::Spawner;
-use embassy_net::{DhcpConfig, IpAddress, IpEndpoint, Runner, StackResources};
+use embassy_net::{DhcpConfig, IpAddress, IpEndpoint, Runner, Stack, StackResources};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
     clock::CpuClock,
@@ -32,9 +34,15 @@ use panic_rtt_target as _;
 use esp_junkers_bm1::{
     console::console_task,
     defmt_via_tcp::{self, log_serve_task},
+    homematic::{
+        HmIpGetHostResponse, TIMESTAMP_LAST_HMIP_UPDATE, json_process_device, json_process_home,
+        single_https_request, websocket_connection,
+    },
     i2c::{BOILER_STATE, i2c_task},
     ota::ota_task,
 };
+use jiff::Timestamp;
+use reqwless::client::HttpClient;
 use smart_leds::{RGB8, SmartLedsWrite};
 
 extern crate alloc;
@@ -57,11 +65,48 @@ struct ConfigToml {
     pub wifi_ssid: &'static str,
     #[default("wifiPasswordToUse")]
     pub wifi_password: &'static str,
+
+    // HMIP config:
+    #[default("homematicip-python")]
+    pub hmip_application_identifier: &'static str,
+    #[default("1.0")]
+    pub hmip_application_version: &'static str,
+    #[default("none")]
+    pub hmip_device_manufacturer: &'static str,
+    #[default("Computer")]
+    pub hmip_device_type: &'static str,
+    #[default("Darwin")]
+    pub hmip_os_type: &'static str,
+    #[default("25.0.0")]
+    pub hmip_os_version: &'static str,
+    #[default("https://lookup.homematic.com:48335/getHost")]
+    pub hmip_lookup_host: &'static str,
+    #[default("23dig-accpointid")]
+    pub hmip_accesspoint_id: &'static str,
+    #[default("61dig-authtoken")]
+    pub hmip_authtoken: &'static str,
+    #[default("128dig-clientauth")]
+    pub hmip_clientauth: &'static str,
+
     // Log server config:
     #[default("")] // use the ip addr here (not a hostname, empty = disabled)
     pub log_server_ip: &'static str,
     #[default(65455)]
     pub log_server_port: u16,
+}
+
+static mut RNG_INSTANCE: Option<Rng> = None;
+
+#[unsafe(no_mangle)]
+extern "C" fn random() -> core::ffi::c_ulong {
+    unsafe {
+        if let Some(ref mut rng) = RNG_INSTANCE {
+            rng.random() as core::ffi::c_ulong
+        } else {
+            warn!("RNG_INSTANCE not initialized!");
+            0
+        }
+    }
 }
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -143,13 +188,10 @@ async fn main(spawner: Spawner) -> ! {
     // MARK: init wifi
     let rng = Rng::new(); // peripherals.RNG);
     let net_seed = rng.random() as u64 | ((rng.random() as u64) << 32);
+    unsafe {
+        RNG_INSTANCE = Some(rng);
+    }
 
-    //let (mut controller, interfaces) = esp_radio::wifi::new(wifi, Default::default()).unwrap();
-
-    /*let radio_init = mk_static!(
-        esp_radio::Controller,
-        esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller")
-    );*/
     let wifi_ctrl_config = esp_radio::wifi::Config::default().with_country_code(*b"DE");
     let (wifi_controller, interfaces) = esp_radio::wifi::new(peripherals.WIFI, wifi_ctrl_config)
         .expect("Failed to initialize Wi-Fi controller");
@@ -165,13 +207,13 @@ async fn main(spawner: Spawner) -> ! {
     let (stack, runner) = embassy_net::new(
         wifi_interface,
         config,
-        mk_static!(StackResources<5>, StackResources::<5>::new()),
+        mk_static!(StackResources<6>, StackResources::<6>::new()),
         net_seed,
     );
 
     // spawn the tasks:
     let flash = esp_storage::FlashStorage::new(peripherals.FLASH);
-    let sha = esp_hal::sha::Sha::new(peripherals.SHA);
+    //let sha = esp_hal::sha::Sha::new(peripherals.SHA);
     spawner.spawn(net_task(runner)).unwrap();
     spawner.spawn(connection(wifi_controller)).unwrap();
 
@@ -195,8 +237,15 @@ async fn main(spawner: Spawner) -> ! {
             peripherals.GPIO0,
         ))
         .unwrap();
-    spawner.spawn(ota_task(stack, flash, sha)).unwrap();
+    spawner.spawn(ota_task(stack, flash)).unwrap();
     spawner.spawn(console_task(stack)).unwrap();
+    spawner
+        .spawn(cloud_connection_task(
+            stack,
+            peripherals.SHA,
+            peripherals.RSA,
+        ))
+        .unwrap();
 
     info!(
         "Free heap before main loop: {} bytes",
@@ -389,4 +438,351 @@ async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
     info!("task 'net_task' running...");
     runner.run().await;
     //info!("end net_task");
+}
+
+// MARK: homematic cloud connection task
+#[embassy_executor::task]
+async fn cloud_connection_task(
+    stack: Stack<'static>,
+    sha: esp_hal::peripherals::SHA<'static>,
+    rsa: esp_hal::peripherals::RSA<'static>,
+) {
+    info!("task 'cloud_connection_task' running...");
+
+    // determine free heap before TLS init
+    info!("Free heap before TLS: {} bytes", esp_alloc::HEAP.free());
+    info!("Heap stats before TLS: {:?}", esp_alloc::HEAP.stats());
+
+    let mut tls = esp_mbedtls::Tls::new(sha).unwrap().with_hardware_rsa(rsa);
+    tls.set_debug(5);
+    //info!("TLS self-test(SHA384) result: {:?}", tls.self_test(esp_mbedtls::TlsTest::Sha384, true));
+    //info!("TLS self-test(AES) result: {:?}", tls.self_test(esp_mbedtls::TlsTest::Aes, true));
+    //info!("ssl_config_check result: {:x}", tls.ssl_config_check());
+    let tls_ref = tls.reference();
+
+    use embassy_net::tcp::client::{TcpClient, TcpClientState};
+    let tcp_state = mk_static!(TcpClientState::<1, 16384, 16640>, TcpClientState::new());
+
+    loop {
+        // Wait for network to be ready
+        loop {
+            if stack.is_link_up()
+                && let Some(config) = stack.config_v4()
+            {
+                info!("CC: network ready with IP: {:?}", config.address);
+                break;
+            }
+            Timer::after(Duration::from_millis(500)).await;
+        }
+        info!("Network is ready, starting cloud connection...");
+
+        // connect to homematic ip cloud and get data from there
+        let config = reqwless::client::TlsConfig::new(
+            reqwless::TlsVersion::Tls1_2,
+            reqwless::Certificates::default(),
+            tls_ref,
+        );
+
+        let tcp_client = TcpClient::new(stack, tcp_state);
+        let dns_socket = embassy_net::dns::DnsSocket::new(stack);
+
+        let mut client = HttpClient::new_with_tls(&tcp_client, &dns_socket, config);
+        info!(
+            "HTTP client with TLS initialized. Free heap after TLS: {} bytes",
+            esp_alloc::HEAP.free()
+        );
+        info!("Heap stats after TLS: {:?}", esp_alloc::HEAP.stats());
+
+        let url_rest: RefCell<Option<heapless::String<64>>> = RefCell::new(None);
+        let url_websocket: RefCell<Option<heapless::String<64>>> = RefCell::new(None);
+
+        let process_gethost_response = |code: reqwless::response::StatusCode, body: &mut [u8]| {
+            info!("Processing getHost response with status code {}:", code);
+            if !matches!(code.0, 200..=299) {
+                warn!("getHost response returned error code: {}", code);
+                if let Ok(body_str) = core::str::from_utf8(body) {
+                    info!("Response body: {}", body_str);
+                }
+            }
+            // todo: unescape needed? can host names contain json escaped chars?
+            match serde_json_core::from_slice::<HmIpGetHostResponse>(body) {
+                Ok((resp, _consumed)) => {
+                    //info!("Parsed JSON response, consumed {} bytes", consumed);
+                    info!("urlREST: {}", resp.url_rest);
+                    *url_rest.borrow_mut() = heapless::String::try_from(resp.url_rest).ok();
+                    info!("urlWebSocket: {}", resp.url_websocket);
+                    *url_websocket.borrow_mut() =
+                        heapless::String::try_from(resp.url_websocket).ok();
+                    // replace wss: with https:
+                    if let Some(ref mut url_ws) = *url_websocket.borrow_mut()
+                        && url_ws.starts_with("wss:")
+                    {
+                        let https_url = heapless::format!(64; "https:{}", &url_ws.as_str()[4..])
+                            .unwrap_or_default();
+                        *url_ws = https_url;
+                        info!("Converted urlWebSocket to HTTPS URL: {}", url_ws);
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to parse JSON response: {}",
+                        defmt::Debug2Format(&err)
+                    );
+                }
+            };
+        };
+
+        let client_characteristics = heapless::format!(400; "{{\"clientCharacteristics\": {{\"apiVersion\": \"10\", \"applicationIdentifier\": \"{}\", \"applicationVersion\": \"{}\", \"deviceManufacturer\": \"{}\", \"deviceType\": \"Computer\", \"language\": \"de_DE\", \"osType\": \"{}\", \"osVersion\": \"{}\"}}, \"id\": \"{}\"}}",
+        CONFIG_TOML.hmip_application_identifier,
+        CONFIG_TOML.hmip_application_version,
+        CONFIG_TOML.hmip_device_manufacturer,
+        CONFIG_TOML.hmip_os_type,
+        CONFIG_TOML.hmip_os_version,
+        CONFIG_TOML.hmip_accesspoint_id).unwrap_or_default();
+
+        let get_host_res = single_https_request(
+            reqwless::request::Method::POST,
+            CONFIG_TOML.hmip_lookup_host,
+            &[
+                ("Content-Type", "application/json"),
+                ("Accept", "application/json"),
+            ],
+            client_characteristics.as_bytes(),
+            process_gethost_response,
+            &mut client,
+        )
+        .await;
+        if get_host_res.is_err() {
+            warn!("Error during getHost request: {:?}", get_host_res.err());
+            // reset URLs
+            *url_rest.borrow_mut() = None;
+            *url_websocket.borrow_mut() = None;
+        }
+
+        // do we have a rest url? then open a session to that one:
+        let url_rest_clone = url_rest.borrow().clone();
+        if let Some(mut url) = url_rest_clone {
+            info!("Got REST URL from getHost: {}", url);
+            let process_rest_response = |code, body: &mut [u8]| {
+                info!(
+                    "Processing REST response with status code {}:, body.len(): {}",
+                    code,
+                    body.len()
+                );
+                /*if let Ok(body_str) = core::str::from_utf8(body) {
+                    info!("Response body: {}", body_str);
+                }*/
+                // use core_json streaming deserializer
+                if let Ok(ref mut des) =
+                    core_json::Deserializer::<&[u8], core_json::ConstStack<20>>::new(&body[..])
+                {
+                    if let Ok(mut val) = des.value() {
+                        if let Ok(core_json::Type::Object) = val.kind()
+                            && let Ok(mut fields) = val.fields()
+                        {
+                            loop {
+                                match fields.next() {
+                                    Some(Ok(mut field)) => {
+                                        // collect field key:
+                                        let key: heapless::String<200> =
+                                            field.key().filter_map(|k| k.ok()).collect();
+                                        // info!("Field key: {}", key);
+                                        match key.as_ref() {
+                                            "home" => {
+                                                info!("Processing 'home' object");
+                                                let _ = json_process_home(field);
+                                            }
+                                            "devices" => {
+                                                // info!("Processing 'devices':");
+                                                // iterate over devices: (object keys are device ids)
+                                                if let Ok(mut devices) = field.value().fields() {
+                                                    while let Some(Ok(device)) = devices.next() {
+                                                        let _ = json_process_device(device);
+                                                    }
+                                                }
+                                            }
+                                            "clients" | "groups" => {}
+                                            _ => {
+                                                // clients, groups
+                                                warn!("Ignoring field key: {}", key);
+                                            }
+                                        }
+                                    }
+                                    Some(Err(e)) => {
+                                        warn!(
+                                            "Error iterating field: {:?}",
+                                            defmt::Debug2Format(&e)
+                                        );
+                                        // dont break;
+                                    }
+                                    None => {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // iterate over the fields: (expect home, groups, devices, clients)
+                    } else {
+                        warn!("Failed to parse first JSON value");
+                    }
+                } else {
+                    warn!("Failed to create core_json deserializer");
+                }
+            };
+
+            // add /hmip/home/getCurrentState
+            url.push_str("/hmip/home/getCurrentState").unwrap();
+            info!("Full REST URL for getCurrentState: {}", url);
+            let _rest_res = single_https_request(
+                reqwless::request::Method::POST,
+                &url,
+                &[
+                    ("Content-Type", "application/json"), // ("Accept", "application/json"),
+                    ("VERSION", "12"), // todo is 12 from the response from getHost?
+                    ("AUTHTOKEN", CONFIG_TOML.hmip_authtoken),
+                    ("CLIENTAUTH", CONFIG_TOML.hmip_clientauth),
+                    ("ACCESSPOINT-ID", CONFIG_TOML.hmip_accesspoint_id),
+                ],
+                client_characteristics.as_bytes(),
+                process_rest_response,
+                &mut client,
+            )
+            .await;
+            if _rest_res.is_err() {
+                warn!(
+                    "Error during getCurrentState request: {:?}",
+                    _rest_res.err()
+                );
+                // continuing anyway to try websocket EVENT updates only... ? TODO!
+            }
+        } else {
+            warn!("No REST URL obtained from getHost, cannot proceed");
+        }
+
+        let url_websocket_clone: Option<alloc::string::String> =
+            url_websocket.borrow().as_ref().map(|s| s.as_str().into());
+        if let Some(url_websocket) = url_websocket_clone {
+            let process_binary_cb = |data: &mut [u8]| {
+                //info!("Received websocket binary data, len: {}", data.len());
+                if let Ok(ref mut des) =
+                    core_json::Deserializer::<&[u8], core_json::ConstStack<20>>::new(&data[..])
+                {
+                    if let Ok(val) = des.value() {
+                        if let Ok(mut fields) = val.fields() {
+                            while let Some(Ok(mut field)) = fields.next() {
+                                let key: heapless::String<64> =
+                                    field.key().filter_map(|k| k.ok()).collect();
+                                match key.as_ref() {
+                                    "events" => {
+                                        //info!("Processing 'events' object");
+                                        if let Ok(mut events) = field.value().fields() {
+                                            while let Some(Ok(event)) = events.next() {
+                                                /*let event_key: heapless::String<10> =
+                                                    event.key().filter_map(|k| k.ok()).collect();
+                                                info!(" Processing event key: {}", event_key);*/
+                                                if let Ok(mut event_fields) = event.value().fields()
+                                                {
+                                                    while let Some(Ok(mut event_field)) =
+                                                        event_fields.next()
+                                                    {
+                                                        let event_field_key: heapless::String<100> =
+                                                            event_field
+                                                                .key()
+                                                                .filter_map(|k| k.ok())
+                                                                .collect();
+                                                        match event_field_key.as_ref() {
+                                                            "device" => {
+                                                                let _ = json_process_device(
+                                                                    event_field,
+                                                                ); // TODO only if pushEventType is "DEVICE_CHANGED"? (assuming this comes always first...)
+                                                            }
+                                                            "home" => {
+                                                                let _ =
+                                                                    json_process_home(event_field);
+                                                            }
+                                                            "pushEventType" | "group" => {
+                                                                // GROUP_CHANGED or DEVICE_CHANGED
+                                                                // we derive indirectly by using only the "device"
+                                                            }
+                                                            _ => {
+                                                                info!(
+                                                                    "  Ignoring event field key: {}",
+                                                                    event_field_key
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    "timestamp" => {
+                                        let timestamp_ms =
+                                            field.value().to_number().ok().and_then(|n| n.i64());
+                                        if let Some(timestamp_ms) = timestamp_ms {
+                                            //info!("  timestamp (ms): {}", timestamp_ms);
+                                            let timestamp =
+                                                Timestamp::from_millisecond(timestamp_ms).ok();
+                                            // replace TIMESTAMP_LAST_HMIP_UPDATE
+                                            TIMESTAMP_LAST_HMIP_UPDATE.lock(|tsp| {
+                                                *tsp.borrow_mut() = timestamp;
+                                            });
+                                        }
+                                        /*
+                                        let time =
+                                            Timestamp::from_millisecond(timestamp.unwrap_or(0))
+                                                //.and_then(|t| Ok(t/* .to_zoned(TZ.clone())*/.strftime("%y%m%d %T"))).unwrap();
+                                                .and_then(|t| {
+                                                    Ok(t /* .to_zoned(TZ.clone())*/
+                                                        .to_string())
+                                                })
+                                                .unwrap();
+                                        info!("  timestamp: {}", &time.as_str());*/
+                                    }
+                                    "origin" | "accessPointId" => {}
+                                    _ => {
+                                        info!("Ignoring websocket field key: {}", key);
+                                    }
+                                }
+                            }
+                        } else {
+                            warn!("Websocket data is not an object");
+                        }
+                    } else {
+                        warn!("Failed to parse first JSON value from websocket data");
+                    }
+                } else {
+                    warn!("Failed to create core_json deserializer for websocket data");
+                }
+            };
+
+            // open websocket connection to url_websocket
+            let _ws_res = websocket_connection(
+                &url_websocket,
+                &[
+                    ("AUTHTOKEN", CONFIG_TOML.hmip_authtoken),
+                    ("CLIENTAUTH", CONFIG_TOML.hmip_clientauth),
+                    ("ACCESSPOINT-ID", CONFIG_TOML.hmip_accesspoint_id),
+                ],
+                process_binary_cb,
+                &mut client,
+            )
+            .await;
+        } else {
+            warn!("No WebSocket URL obtained from getHost, cannot proceed");
+        }
+        // sleep a bit before restarting the loop
+        Timer::after(Duration::from_secs(5)).await;
+        info!("Restarting cloud connection task loop...");
+    }
+    /* in header_buf:
+    HTTP/1.1 200 OK
+    Server: Apache-Coyote/1.1
+    Set-Cookie: JSESSIONID=FAD164160D2DFC19F18E2A2F2C5E90ED; Path=/; Secure; HttpOnly
+    X-Application-Context: application
+    Content-Type: application/json;charset=UTF-8
+    Content-Length: 223
+    Date: Sun, 26 Oct 2025 10:02:34 GMT
+     */
+    // info!("end cloud_connection_task");
 }

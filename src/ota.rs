@@ -25,7 +25,7 @@ extern crate alloc;
 pub async fn ota_task(
     stack: Stack<'static>,
     mut flash: FlashStorage<'static>,
-    mut sha: esp_hal::sha::Sha<'static>,
+    //mut sha: esp_hal::sha::Sha<'static>,
 ) {
     Timer::after(Duration::from_secs(5)).await;
     let mut buffer =
@@ -66,7 +66,7 @@ pub async fn ota_task(
         match acc {
             Ok(()) => {
                 info!("OTA connection established");
-                let result = process_ota_img_push(&mut server, &mut ota, &mut sha).await;
+                let result = process_ota_img_push(&mut server, &mut ota).await;
                 match result {
                     Ok(()) => {
                         info!("OTA image processed successfully - rebooting...");
@@ -208,7 +208,6 @@ const _: () = assert!(core::mem::size_of::<EspImageSegmentHeader>() == 8);
 async fn process_ota_img_push<F>(
     socket: &mut TcpSocket<'_>,
     ota: &mut esp_bootloader_esp_idf::ota_updater::OtaUpdater<'_, F>,
-    sha: &mut esp_hal::sha::Sha<'static>,
 ) -> Result<(), embassy_net::tcp::Error>
 where
     F: embedded_storage::Storage,
@@ -273,7 +272,8 @@ where
             return Err(embassy_net::tcp::Error::ConnectionReset);
         }
 
-        let mut sha_hasher = sha.start::<esp_hal::sha::Sha256>();
+        //let mut sha_hasher = sha.start::<esp_hal::sha::Sha256>();
+        let mut sha_hasher = Sha256::new();
 
         let mut flash_offset = 0usize;
         match next_app_partition.write(flash_offset as u32, header_bytes) {
@@ -395,8 +395,8 @@ where
                 flash_offset
             );
             update_sha256(&mut sha_hasher, &data_buf.as_slice()[..read - 32]);
-            let mut sha256_from_recvd = [0u8; 32];
-            nb::block!(sha_hasher.finish(sha256_from_recvd.as_mut_slice()));
+            let sha256_from_recvd = sha_hasher.finish();
+            //nb::block!(sha_hasher.finish(sha256_from_recvd.as_mut_slice()));
             if sha256_from_recvd == data_buf[read - 32..read] {
                 info!("SHA256 verification successful");
                 // info!("Received SHA256:    {:?}", &sha256_from_recvd);
@@ -510,46 +510,65 @@ where
 }
 
 fn update_sha256<'a>(
-    sha: &mut esp_hal::sha::ShaDigest<'a, esp_hal::sha::Sha256, &mut esp_hal::sha::Sha<'a>>,
+    //sha: &mut esp_hal::sha::ShaDigest<'a, esp_hal::sha::Sha256, &mut esp_hal::sha::Sha<'a>>,
+    sha: &mut Sha256,
     data: &[u8],
 ) {
-    let mut data = data;
-    while !data.is_empty() {
-        data = nb::block!(sha.update(data)).unwrap();
-    }
+    sha.update(data);
+    // let mut data = data;
+    // while !data.is_empty() {
+    //     data = nb::block!(sha.update(data)).unwrap();
+    // }
 }
 
-/*
-struct Sha256 <'b> {
-    sha_hasher: esp_hal::sha::ShaDigest<'static, esp_hal::sha::Sha256, &'b mut esp_hal::sha::Sha<'static>>,
+/// Simple SHA256 wrapper around mbedTLS
+///
+/// Note: we cannot use esp_hal::sha as the peripheral is already in use for TLS connections
+struct Sha256 {
+    ctx: esp_mbedtls_sys::bindings::mbedtls_sha256_context,
 }
 
-impl<'b> Sha256<'b> {
-    pub fn new(sha_hasher: esp_hal::sha::ShaDigest<'static, esp_hal::sha::Sha256, &'b mut esp_hal::sha::Sha<'static>>) -> Self {
-      //let sha_hasher = sha.start::<esp_hal::sha::Sha256>();
-        Sha256 {
-          sha_hasher
-        }
+impl Sha256 {
+    pub fn new() -> Self {
+        let ctx: esp_mbedtls_sys::bindings::mbedtls_sha256_context = unsafe {
+            let mut ctx: esp_mbedtls_sys::bindings::mbedtls_sha256_context = core::mem::zeroed();
+            esp_mbedtls_sys::bindings::mbedtls_sha256_init(&mut ctx);
+            esp_mbedtls_sys::bindings::mbedtls_sha256_starts(&mut ctx, 0);
+            ctx
+        };
+        Sha256 { ctx }
     }
 
     pub fn update(&mut self, data: &[u8]) {
-      let mut data = data;
-      while !data.is_empty() {
-          data = nb::block!(self.sha_hasher.update(data)).unwrap();
-      }
+        if data.is_empty() {
+            return;
+        }
+        unsafe {
+            esp_mbedtls_sys::bindings::mbedtls_sha256_update(
+                &mut self.ctx,
+                data.as_ptr(),
+                data.len(),
+            );
+        }
     }
 
     pub fn finish(&mut self) -> [u8; 32] {
-        let mut sha256_res = [0u8; 32];
-        nb::block!(self.sha_hasher.finish(sha256_res.as_mut_slice()));
-        sha256_res
+        unsafe {
+            let mut sha256_res: [u8; 32] = [0u8; 32];
+            esp_mbedtls_sys::bindings::mbedtls_sha256_finish(
+                &mut self.ctx,
+                sha256_res.as_mut_ptr(),
+            );
+            esp_mbedtls_sys::bindings::mbedtls_sha256_free(&mut self.ctx);
+            sha256_res
+        }
     }
 }
 
-impl Drop for Sha256<'_> {
+impl Drop for Sha256 {
     fn drop(&mut self) {
-        // make sure we finish the sha when going out of scope
-        // TODO? self.sha_hasher.cancel();
+        unsafe {
+            esp_mbedtls_sys::bindings::mbedtls_sha256_free(&mut self.ctx);
+        }
     }
 }
-*/

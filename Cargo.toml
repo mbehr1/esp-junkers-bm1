@@ -12,6 +12,7 @@ path = "./src/bin/main.rs"
 critical-section = "1.2.0"
 defmt                  = {version = "1.0.1", features = ["encoding-rzcobs"]}
 embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-futures = { version = "0.1.2", features = ["defmt"] }
 embassy-net = { version = "0.7.1", features = [
   "defmt",
   "dhcpv4",
@@ -70,6 +71,31 @@ ws2812-spi = {version = "0.5.1", features = ["mosi_idle_high"]}
 smart-leds = "0.4.0"
 enumset = "1.1.10"
 fring = "0.3.3"
+
+base64         = {version = "0.22.1", default-features =  false, features = [] }
+core-json = "0.4.0"
+embedded-nal-async = "0.8.0"
+embedded-websocket = {version = "0.9.4", default-features = false }
+esp-mbedtls = { version="0.1", git="https://github.com/mbehr1/esp-mbedtls", features=["esp32c6", "async"], rev="289436ff984b67139762bc97855b87d8dc41dbf8"}
+esp-mbedtls-sys = { version="0.1", git="https://github.com/mbehr1/esp-mbedtls", features=["esp32c6"], rev="289436ff984b67139762bc97855b87d8dc41dbf8"}
+jiff = {version="0.2.16", default-features = false, features = ["alloc", "static"] }
+rand_core       = "0.9.3"
+reqwless = { version = "0.13", default-features = false, features = ["defmt", "esp-mbedtls", "alloc"], git="https://github.com/mbehr1/reqwless", branch = "fix/defmt_esp-mbedtls"}
+serde = { version = "1.0.228", default-features = false, features = ["derive"] }
+serde-json-core = "0.6.0"
+
+# Force reqwless to use your esp-mbedtls fork
+[patch."https://github.com/esp-rs/esp-mbedtls"]
+esp-mbedtls = { git = "https://github.com/mbehr1/esp-mbedtls", rev="289436ff984b67139762bc97855b87d8dc41dbf8" }
+esp-mbedtls-sys = { git = "https://github.com/mbehr1/esp-mbedtls", rev="289436ff984b67139762bc97855b87d8dc41dbf8" }
+
+[patch.crates-io]
+esp-hal = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave" }
+esp-alloc = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave" }
+esp-bootloader-esp-idf = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave" }
+esp-rtos = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave" }
+esp-storage = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave" }
+esp-radio = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave" }
 
 [build-dependencies]
 uuid = {version = "1.18.1", features = ["v7"]}
