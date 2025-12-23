@@ -266,7 +266,10 @@ where
         );
 
         if part_size < 0x1e0000 {
-            warn!("Partition size too small ({} < 0x1e0000) for image", part_size);
+            warn!(
+                "Partition size too small ({} < 0x1e0000) for image",
+                part_size
+            );
             return Err(embassy_net::tcp::Error::ConnectionReset);
         }
 

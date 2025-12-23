@@ -2,7 +2,7 @@
 // [] add console commands for i2c read/write of pcf8570 ram
 // [x] add i2c slave device emulating the junkers bm1 pcf8570 ram
 // [] add homematic support
-// [] add defmt_via_tcp.rs for logging to remote-defmt-srv
+// [x] add defmt_via_tcp.rs for logging to remote-defmt-srv
 // [] refactor ota to standalone crate
 // [] refactor defmt_via_tcp to standalone crate
 // [x] add console to interact (reset, overwrite, read/write)
@@ -17,7 +17,7 @@
 
 use defmt::{error, info, warn};
 use embassy_executor::Spawner;
-use embassy_net::{DhcpConfig, Runner, StackResources};
+use embassy_net::{DhcpConfig, IpAddress, IpEndpoint, Runner, StackResources};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
     clock::CpuClock,
@@ -31,6 +31,7 @@ use panic_rtt_target as _;
 
 use esp_junkers_bm1::{
     console::console_task,
+    defmt_via_tcp::{self, log_serve_task},
     i2c::{BOILER_STATE, i2c_task},
     ota::ota_task,
 };
@@ -56,6 +57,11 @@ struct ConfigToml {
     pub wifi_ssid: &'static str,
     #[default("wifiPasswordToUse")]
     pub wifi_password: &'static str,
+    // Log server config:
+    #[default("")] // use the ip addr here (not a hostname, empty = disabled)
+    pub log_server_ip: &'static str,
+    #[default(65455)]
+    pub log_server_port: u16,
 }
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -66,7 +72,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 async fn main(spawner: Spawner) -> ! {
     // generator version: 1.0.1
 
-    rtt_target::rtt_init_defmt!();
+    let log_consumer = defmt_via_tcp::init();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
@@ -168,6 +174,19 @@ async fn main(spawner: Spawner) -> ! {
     let sha = esp_hal::sha::Sha::new(peripherals.SHA);
     spawner.spawn(net_task(runner)).unwrap();
     spawner.spawn(connection(wifi_controller)).unwrap();
+
+    // Log server config:
+    let log_server_address: Result<IpAddress, _> = CONFIG_TOML.log_server_ip.parse();
+    if let Ok(log_server_address) = log_server_address {
+        let log_server_endpoint = IpEndpoint::new(log_server_address, CONFIG_TOML.log_server_port);
+        info!("Log server configured at {}", log_server_endpoint);
+        spawner
+            .spawn(log_serve_task(stack, log_consumer, log_server_endpoint))
+            .unwrap();
+    } else {
+        info!("No valid log server IP address configured, logging disabled");
+    }
+
     spawner
         .spawn(i2c_task(
             peripherals.I2C0,
