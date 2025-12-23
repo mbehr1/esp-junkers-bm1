@@ -10,7 +10,27 @@ use crate::{
     homematic::DEVICES,
     i2c::{REMOTE_STOP_PUMP, REMOTE_VL_SOLL2},
 };
+use core::cell::RefCell;
 use defmt::{info, warn};
+use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
+use embassy_time::Instant;
+
+/// manual override of vl_soll2 and pump_onoff
+/// if set to Some((vl_soll2, pump_onoff)), use these values instead
+/// None means automatic regulation
+//pub static MANUAL_VL_SOLL2:
+pub struct ManualOverride {
+    pub vl_soll2: Option<u8>,     // vl_soll2 in 0.5 degree C steps
+    pub pump_onoff: Option<bool>, // true = pump on, false = pump off
+    pub active_till: Instant,
+}
+
+pub static MANUAL_OVERRIDE: Mutex<CriticalSectionRawMutex, RefCell<ManualOverride>> =
+    Mutex::new(RefCell::new(ManualOverride {
+        vl_soll2: None,
+        pump_onoff: None,
+        active_till: Instant::MIN, // not active
+    }));
 
 /// Cyclic regulator tick function to be called from main loop
 ///
@@ -28,11 +48,13 @@ use defmt::{info, warn};
 /// - if BOILER_STATE.vl_temp2 > 75C, turn on pump and set REMOTE_VL_SOLL2 to 20C
 ///
 pub fn regulator_tick() {
-    // gather: min, max, avg valve positions
+    let now = Instant::now();
 
+    // target values to be determined
     let mut pump_onoff = false;
     let mut vl_soll2 = 10 * 2u8; // default 10C
 
+    // gather: min, max, avg valve positions
     if let Some((_valve_pos_min, valve_pos_max, valve_pos_avg)) = DEVICES.lock(|devices| {
         let mut min = f32::MAX;
         let mut max = f32::MIN;
@@ -84,6 +106,27 @@ pub fn regulator_tick() {
         // no devices available
         warn!("Regulator: no devices available");
     }
+
+    // manual override?
+    MANUAL_OVERRIDE.lock(|ho| {
+        let ho = ho.borrow();
+        if now < ho.active_till {
+            if let Some(or_vl_soll2) = ho.vl_soll2 {
+                info!(
+                    "Regulator: manual override active, setting vl_soll2 to {}C",
+                    or_vl_soll2 as f32 / 2.0
+                );
+                vl_soll2 = or_vl_soll2;
+            }
+            if let Some(pump) = ho.pump_onoff {
+                info!(
+                    "Regulator: manual override active, setting pump_onoff to {}",
+                    pump
+                );
+                pump_onoff = pump;
+            }
+        }
+    });
 
     // set the values in REMOTE_VL_SOLL2 and REMOTE_STOP_PUMP
     if REMOTE_VL_SOLL2.swap(vl_soll2, core::sync::atomic::Ordering::Relaxed) != vl_soll2 {

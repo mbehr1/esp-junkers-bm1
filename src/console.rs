@@ -1,8 +1,10 @@
 use defmt::info;
 use embassy_net::{IpListenEndpoint, Stack, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use nostd_interactive_terminal::prelude::*;
+
+use crate::regulator::MANUAL_OVERRIDE;
 
 extern crate alloc;
 
@@ -119,6 +121,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         writer
                             .writeln("  toggle-output - Toggle level shifter output\r")
                             .await?;
+                        writer.writeln("  override - Set manual override. Args: <mins> (0 = off), [vl_soll (<0 to ignore)] [pump_onoff]\r").await?;
                     }
                     "exit" => {
                         writer.writeln("Exiting console...\r").await?;
@@ -136,6 +139,89 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         } else {
                             writer.writeln("Level shifter output DISABLED\r").await?;
                         }
+                    }
+                    "override" => {
+                        // we expect at least 1 argument: minutes to activate override
+                        let args = parsed.args;
+                        if args.len() < 1 {
+                            writer
+                                .write_error("override command requires at least 1 argument (duration in minutes)\r")
+                                .await?;
+                            continue;
+                        }
+                        let duration_mins: u32 = match args[0].parse() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                writer
+                                    .write_error("Failed to parse duration argument\r")
+                                    .await?;
+                                continue;
+                            }
+                        };
+                        let mut vl_soll2: Option<u8> = None;
+                        let mut pump_onoff: Option<bool> = None;
+                        if args.len() >= 2 {
+                            // try parse as temperature
+                            match args[1].parse::<i8>() {
+                                Ok(t) if t >= 0 => {
+                                    vl_soll2 = Some((t as u8) * 2);
+                                }
+                                Ok(_) => { // weirdly using if t < 0 doesn't work here... (non exhaustive patterns)
+                                    // ignore
+                                }
+                                Err(_) => {
+                                    writer
+                                        .write_error("Failed to parse vl_soll argument\r")
+                                        .await?;
+                                    continue;
+                                }
+                            }
+                        }
+                        if args.len() >= 3 {
+                            // try parse as bool
+                            match args[2].to_lowercase().as_str() {
+                                "on" | "1" | "true" => {
+                                    pump_onoff = Some(true);
+                                }
+                                "off" | "0" | "false" => {
+                                    pump_onoff = Some(false);
+                                }
+                                _ => {
+                                    writer
+                                        .write_error("Failed to parse pump_onoff argument\r")
+                                        .await?;
+                                    continue;
+                                }
+                            }
+                        }
+                        // set the MANUAL_OVERRIDE
+                        let now = Instant::now();
+                        MANUAL_OVERRIDE.lock(|mo| {
+                            let mut mo = mo.borrow_mut();
+                            if duration_mins == 0 {
+                                // disable
+                                mo.active_till = Instant::MIN;
+                            } else {
+                                mo.active_till =
+                                    now + Duration::from_secs(duration_mins as u64 * 60);
+                            }
+                            mo.vl_soll2 = vl_soll2;
+                            mo.pump_onoff = pump_onoff;
+                        });
+                        writer
+                            .writeln(
+                                &heapless::format!(
+                                    128;
+                                    "Manual override set for {} minutes\r",
+                                    if duration_mins == 0 {
+                                        0
+                                    } else {
+                                        duration_mins
+                                    }
+                                )
+                                .unwrap_or_default(),
+                            )
+                            .await?;
                     }
                     "info" => {
                         let now = esp_hal::time::Instant::now();

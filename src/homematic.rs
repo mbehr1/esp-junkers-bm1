@@ -1,6 +1,6 @@
 use base64::prelude::*;
 use core::cell::RefCell;
-use defmt::{debug, info, warn};
+use defmt::{info, warn};
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
 use embassy_time::{Duration, Timer};
