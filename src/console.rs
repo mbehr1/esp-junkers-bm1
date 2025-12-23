@@ -116,6 +116,9 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             .writeln("  info   - Show system information\r")
                             .await?;
                         writer.writeln("  restart- Restart the system\r").await?;
+                        writer
+                            .writeln("  toggle-output - Toggle level shifter output\r")
+                            .await?;
                     }
                     "exit" => {
                         writer.writeln("Exiting console...\r").await?;
@@ -124,6 +127,15 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                     "restart" => {
                         writer.writeln("Restarting system...\r").await?;
                         return Ok(ExitReason::Restart); // caller will handle restart to ensure proper connection close
+                    }
+                    "toggle-output" => {
+                        use crate::i2c::OUTPUT_ENABLE;
+                        let old_oe = OUTPUT_ENABLE.fetch_not(core::sync::atomic::Ordering::Relaxed);
+                        if !old_oe {
+                            writer.writeln("Level shifter output ENABLED\r").await?;
+                        } else {
+                            writer.writeln("Level shifter output DISABLED\r").await?;
+                        }
                     }
                     "info" => {
                         let now = esp_hal::time::Instant::now();
@@ -148,6 +160,18 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                         ),
                                 )
                                 .await?;
+                        }
+                        // level shifter output enabled:
+                        {
+                            use crate::i2c::OUTPUT_ENABLE;
+                            let oe = OUTPUT_ENABLE.load(core::sync::atomic::Ordering::Relaxed);
+                            if !oe {
+                                writer
+                                    .write_warning(
+                                        " WARNING: Level shifter output is DISABLED!\r\n",
+                                    )
+                                    .await?;
+                            }
                         }
                         // last boiler state via i2c::BOILER_STATE:
                         {
@@ -176,7 +200,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                     )
                                     .await?;
                             } else {
-                                writer.write_info(" No boiler state available\r\n").await?;
+                                writer.write_warning(" No boiler state available\r\n").await?;
                             }
                         }
                         // current remote values:

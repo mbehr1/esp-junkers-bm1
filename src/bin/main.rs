@@ -173,6 +173,7 @@ async fn main(spawner: Spawner) -> ! {
             peripherals.I2C0,
             peripherals.GPIO4,
             peripherals.GPIO5,
+            peripherals.GPIO0,
         ))
         .unwrap();
     spawner.spawn(ota_task(stack, flash, sha)).unwrap();

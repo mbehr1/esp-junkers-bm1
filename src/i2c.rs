@@ -1,5 +1,5 @@
 use core::cell::RefCell;
-use core::sync::atomic::AtomicU8;
+use core::sync::atomic::{AtomicBool, AtomicU8};
 use critical_section::Mutex;
 use defmt::{error, info};
 use embassy_time::{Duration, Timer};
@@ -10,6 +10,10 @@ use heapless::spsc::{Consumer, Producer, Queue};
 const SLAVE_ADDR: u8 = 0x55; // i2c address to simulate Junkers BM1 PCF8570 ram chip (todo use 0x50...)
 
 /// our interface to main logic:
+
+/// output enable for level shifter to boiler side
+pub static OUTPUT_ENABLE: AtomicBool = AtomicBool::new(false);
+
 ///
 /// status from boiler: (boiler state and uptime we did receive it)
 pub static BOILER_STATE: Mutex<RefCell<Option<(BoilerState, Instant)>>> =
@@ -179,8 +183,17 @@ pub async fn i2c_task(
     i2c_peripheral: esp_hal::peripherals::I2C0<'static>,
     gpio_sda: esp_hal::peripherals::GPIO4<'static>,
     gpio_scl: esp_hal::peripherals::GPIO5<'static>,
+    gpio_oe: esp_hal::peripherals::GPIO0<'static>,
 ) {
     info!("task 'i2c_task' running...");
+
+    // the level shifter has the OE (output enable) ping tied to GPIO0. It has a pull up to vcc (3.3V)
+    // but we can turn it off by pulling GPIO0 low
+    let mut gpio0 = esp_hal::gpio::Output::new(
+        gpio_oe,
+        esp_hal::gpio::Level::Low,
+        esp_hal::gpio::OutputConfig::default(),
+    );
 
     let config = esp_hal::i2c::slave::Config::default()
         .with_address(SLAVE_ADDR.into())
@@ -202,6 +215,8 @@ pub async fn i2c_task(
 
     info!("I2C slave initialized with address 0x{:02X}", SLAVE_ADDR);
     // let mut count = 0u32;
+    gpio0.set_high(); // enable level shifter output to boiler side
+    OUTPUT_ENABLE.store(true, core::sync::atomic::Ordering::Relaxed);
 
     let mut consumer = critical_section::with(|cs| PC.1.borrow_ref_mut(cs).take().unwrap());
     loop {
@@ -262,6 +277,14 @@ pub async fn i2c_task(
                 *bs_ref = Some((boiler_state, Instant::now()));
             }
         });
+
+        let oe = OUTPUT_ENABLE.load(core::sync::atomic::Ordering::Relaxed);
+        if oe && gpio0.is_set_low() {
+            // todo optimize with previous state?
+            gpio0.set_high();
+        } else if !oe && gpio0.is_set_high() {
+            gpio0.set_low();
+        }
         Timer::after(Duration::from_millis(250)).await;
     }
 }
