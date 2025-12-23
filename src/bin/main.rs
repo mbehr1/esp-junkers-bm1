@@ -301,6 +301,9 @@ async fn main(spawner: Spawner) -> ! {
         //     last_data_from_lp = cur_data_from_lp;
         // }
 
+        // cyclic regulator trigger
+        esp_junkers_bm1::regulator::regulator_tick();
+
         // if boiler state is older than 1s, use yellow led
         // if boiler state is older than 5s, use red led
         // else use green led

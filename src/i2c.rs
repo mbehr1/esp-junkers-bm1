@@ -26,7 +26,7 @@ pub static REMOTE_VL_SOLL2: AtomicU8 = AtomicU8::new(10 * 2); // 10C
 /// WW_SOLL temperature setting in 0.5 degree C steps
 pub static REMOTE_WW_SOLL2: AtomicU8 = AtomicU8::new(10 * 2); // 10C
 /// stop pump command from remote control
-pub static REMOTE_STOP_PUMP: AtomicU8 = AtomicU8::new(1); // 0 = pump stopped
+pub static REMOTE_STOP_PUMP: AtomicU8 = AtomicU8::new(1); // 1 = pump shall stop
 /// error code to set in remote state
 pub static REMOTE_ERROR: AtomicU8 = AtomicU8::new(0); // no error
 
@@ -647,7 +647,7 @@ junkers/remote = read/write to addr 0x90 RemoteState 16 bytes
 
 junkers/boiler = write to addr 0x20 BoilerState 13 bytes
 19:10:14 - junkers/boiler: 8C 3E 74 00 78 44 00 28 01 00 01 42 07   // VL Soll 20C = 40dec = 0x28hex
-19:10:31 - junkers/remote: FF B4 000100010000000000000000FF00 // VL Soll 90C
+19:10:31 - junkers/remote: FF B4 00 01 00 01 00 00000000000000FF00 // Power 255, VL Soll 90C, WW Soll 0C, dummy, stop pump 0, dummy2
 19:10:32 - junkers/boiler: 8C3E7400784400 8C 01 00 01 42 07 // VL Soll 70C (8C) nach Max VL Limitierung
 19:10:32 - junkers/boiler: 8C3E7400784400 8C 01 00 01 62 07 // Gas?
 19:10:32 - junkers/boiler: 8C3E7400784400 8C 01 00 01 63 07 // Zündung?
