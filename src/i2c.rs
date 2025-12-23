@@ -10,7 +10,7 @@ use heapless::spsc::{Consumer, Producer, Queue};
 const SLAVE_ADDR: u8 = 0x55; // i2c address to simulate Junkers BM1 PCF8570 ram chip (todo use 0x50...)
 
 /// our interface to main logic:
-
+///
 /// output enable for level shifter to boiler side
 pub static OUTPUT_ENABLE: AtomicBool = AtomicBool::new(false);
 
@@ -65,10 +65,10 @@ impl defmt::Format for ReceiveData {
     }
 }
 
-static PC: (
-    Mutex<RefCell<Option<Producer<'_, ReceiveData>>>>,
-    Mutex<RefCell<Option<Consumer<'_, ReceiveData>>>>,
-) = {
+type QueueProducer = Mutex<RefCell<Option<Producer<'static, ReceiveData>>>>;
+type QueueConsumer = Mutex<RefCell<Option<Consumer<'static, ReceiveData>>>>;
+
+static PC: (QueueProducer, QueueConsumer) = {
     static mut Q: Queue<ReceiveData, 16> = Queue::new();
     // SAFETY: `Q` is only accessible in this scope.
     #[allow(static_mut_refs)]
@@ -92,8 +92,8 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
         // and `interrupt` cannot be called directly or preempt itself.
         //unsafe { &mut P }
         unsafe {
-            let p = &mut *(&raw mut P);
-            p.get_or_insert_with(|| {
+            let p = &raw mut P;
+            (*p).get_or_insert_with(|| {
                 critical_section::with(|cs| PC.0.borrow_ref_mut(cs).take().unwrap())
             })
         }
@@ -101,17 +101,17 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
 
     match reason {
         SlaveEvent::StretchAddrMatch(offset) => {
-            if offset == 0 && data.len() >= 1 {
+            if offset == 0 && !data.is_empty() {
                 // todo error handling, only 1 byte expected
                 let addr = data[0];
                 // set RAM next address
-                RAM_NEXT_ADDR.store(addr as u8, core::sync::atomic::Ordering::Relaxed); // TODO which memory ordering?
+                RAM_NEXT_ADDR.store(addr, core::sync::atomic::Ordering::Relaxed); // TODO which memory ordering?
             }
         }
         SlaveEvent::RxFifoWatermark(offset)
         | SlaveEvent::StretchRxFull(offset)
         | SlaveEvent::TransComplete(offset) => {
-            if data.len() >= 1 {
+            if !data.is_empty() {
                 let (addr, data) = if offset == 0 {
                     (data[0] as usize, &data[1..])
                 } else {
@@ -351,7 +351,7 @@ impl BMRam {
             [offset..offset + core::mem::size_of::<BoilerState>()]
             .try_into()
             .unwrap();
-        let boilerstate = unsafe { core::mem::transmute(*bytes) };
+        let boilerstate = unsafe { core::mem::transmute::<[u8; 13], BoilerState>(*bytes) };
         // mark as read, should be done by the caller
         // self.ram[RAM_BOILER_AVAILABLE_OFFSET] = 0;
 

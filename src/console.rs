@@ -143,7 +143,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                     "override" => {
                         // we expect at least 1 argument: minutes to activate override
                         let args = parsed.args;
-                        if args.len() < 1 {
+                        if args.is_empty() {
                             writer
                                 .write_error("override command requires at least 1 argument (duration in minutes)\r")
                                 .await?;

@@ -509,11 +509,7 @@ where
     info!("OTA: Would flash new image to {:?}", part_type);
 }
 
-fn update_sha256<'a>(
-    //sha: &mut esp_hal::sha::ShaDigest<'a, esp_hal::sha::Sha256, &mut esp_hal::sha::Sha<'a>>,
-    sha: &mut Sha256,
-    data: &[u8],
-) {
+fn update_sha256(sha: &mut Sha256, data: &[u8]) {
     sha.update(data);
     // let mut data = data;
     // while !data.is_empty() {

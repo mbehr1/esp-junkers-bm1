@@ -315,7 +315,7 @@ async fn main(spawner: Spawner) -> ! {
                     .duration_since_epoch()
                     .saturating_sub(timestamp.duration_since_epoch());
                 if age > esp_hal::time::Duration::from_secs(10) {
-                    if age.as_secs() % 10 == 0 {
+                    if age.as_secs().is_multiple_of(10) {
                         error!("Boiler state is stale (age: {}s)", age.as_secs());
                     }
                     RGB8::new(0, 128, 0) // red (red and green mixed?) 0,0,80 = blue
@@ -333,7 +333,7 @@ async fn main(spawner: Spawner) -> ! {
         });
         // if we have no link up, blink red every second:
         let led_color = if !link_state {
-            if now.duration_since_epoch().as_secs() % 2 == 0 {
+            if now.duration_since_epoch().as_secs().is_multiple_of(2) {
                 RGB8::new(0, 128, 0) // red
             } else {
                 led_color
