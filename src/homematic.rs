@@ -443,12 +443,13 @@ where
 
         // loop until connection closed
         // TODO: most frames are a lot smaller (7kb, 10kb), ignore big ones...
-        let mut frame_buffer = heapless::Vec::<u8, { 40 * 1024 }>::new(); // lets hope the events fit into 40kb
-        frame_buffer.resize_default(40 * 1024).unwrap();
+        let mut frame_buffer = heapless::Vec::<u8, { 30 * 1024 }>::new(); // lets hope the events fit into 30kb
+        frame_buffer.resize_default(30 * 1024).unwrap();
         let mut frame_buffer_used = 0usize;
+        let frame_buffer_len = frame_buffer.len();
 
-        let mut rx_buffer = heapless::Vec::<u8, 4096>::new();
-        rx_buffer.resize_default(4096).unwrap();
+        let mut rx_buffer = heapless::Vec::<u8, 2048>::new();
+        rx_buffer.resize_default(2048).unwrap();
         let mut rx_buffer_used = 0usize;
         loop {
             match select(
@@ -461,16 +462,17 @@ where
             .await
             {
                 Either::First(Ok(read)) => {
-                    info!(
-                        "Read {}+{} bytes from websocket connection",
-                        rx_buffer_used, read
-                    );
+                    // info!(
+                    //     "Read {}+{} bytes from websocket connection",
+                    //     rx_buffer_used, read
+                    // );
                     if read > 0 || rx_buffer_used > 0 {
                         // todo better logic for fragmented frames! (loop before read from socket?)
                         rx_buffer_used += read;
                         match ws_client.read(
                             &rx_buffer[..rx_buffer_used],
-                            &mut frame_buffer[frame_buffer_used..],
+                            &mut frame_buffer
+                                [core::cmp::min(frame_buffer_used, frame_buffer_len)..],
                         ) {
                             Ok(frame) => {
                                 rx_buffer_used = if frame.end_of_message {
@@ -480,17 +482,17 @@ where
                                 } else {
                                     0
                                 };
-                                info!(
-                                    "Received websocket, new rx_buffer_used={} frame: {}",
-                                    rx_buffer_used,
-                                    MyWSReadResult(&frame)
-                                );
+                                // info!(
+                                //     "Received websocket, new rx_buffer_used={} frame: {}",
+                                //     rx_buffer_used,
+                                //     MyWSReadResult(&frame)
+                                // );
                                 match frame.message_type {
                             embedded_websocket::WebSocketReceiveMessageType::Text => {
                                 frame_buffer_used += frame.len_to;
                                 if frame.end_of_message {
                                     if let Ok(text) = core::str::from_utf8(&frame_buffer
-                                        [..frame_buffer_used ])
+                                        [..core::cmp::min(frame_buffer_used, frame_buffer_len)])
                                     {
                                         info!(" Websocket Text message: {}", text);
                                     } else {
@@ -508,8 +510,11 @@ where
                                         " Complete binary message received, total length {} bytes",
                                         frame_buffer_used
                                     );
-                                    // process message in frame_buffer[..frame_buffer_used] here...
-                                    process_binary_cb(&mut frame_buffer[..frame_buffer_used]);
+                                    if frame_buffer_used > frame_buffer_len {
+                                        warn!(" Frame buffer overflow, message too large!");
+                                    }else{
+                                        process_binary_cb(&mut frame_buffer[..frame_buffer_used]);
+                                    }
                                     // for now just reset buffer:
                                     frame_buffer_used = 0;
                                 }
@@ -537,8 +542,8 @@ where
                                 frame_buffer_used = 0;
                             }
                             embedded_websocket::WebSocketReceiveMessageType::CloseMustReply | embedded_websocket::WebSocketReceiveMessageType::CloseCompleted => {
-                                info!(" Websocket Close message. Waiting 30s before retrying.");
-                                Timer::after(Duration::from_secs(30)).await;
+                                info!(" Websocket Close message. Waiting 6s before retrying.");
+                                Timer::after(Duration::from_secs(6)).await;
                                 break;
                             }
                         }

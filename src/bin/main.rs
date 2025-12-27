@@ -38,7 +38,7 @@ use esp_junkers_bm1::{
         HmIpGetHostResponse, TIMESTAMP_LAST_HMIP_UPDATE, json_process_device, json_process_home,
         single_https_request, websocket_connection,
     },
-    i2c::{BOILER_STATE, i2c_task},
+    i2c::{BOILER_STATE, BoilerState, REMOTE_VL_SOLL2, i2c_task},
     ota::ota_task,
 };
 use jiff::Timestamp;
@@ -168,22 +168,12 @@ async fn main(spawner: Spawner) -> ! {
     );
     wdt.set_timeout(
         esp_hal::rtc_cntl::RwdtStage::Stage3,
-        esp_hal::time::Duration::from_secs(2),
+        esp_hal::time::Duration::from_secs(10),
     ); // 2s timeout for final stage
     wdt.enable();
 
-    // the ws2812 led on the c6-zero controlled via spi:
-    let spi = esp_hal::spi::master::Spi::new(
-        peripherals.SPI2,
-        esp_hal::spi::master::Config::default()
-            .with_frequency(Rate::from_mhz(3)) //.with_mode(ws2812_spi::MODE),
-            .with_write_bit_order(esp_hal::spi::BitOrder::MsbFirst),
-    )
-    .unwrap()
-    .with_mosi(peripherals.GPIO8);
-    let mut led = ws2812_spi::Ws2812::new(spi);
-
-    let _ = led.write([RGB8::new(0, 0, 0x80)]); // colors are mixed... it's GRB order (weird as the ws2812 sends it properly)
+    // sleep 1s (to smoothen peak current)
+    Timer::after(Duration::from_millis(1000)).await;
 
     // MARK: init wifi
     let rng = Rng::new(); // peripherals.RNG);
@@ -210,6 +200,22 @@ async fn main(spawner: Spawner) -> ! {
         mk_static!(StackResources<6>, StackResources::<6>::new()),
         net_seed,
     );
+
+    // sleep 1s (to smoothen peak current)
+    Timer::after(Duration::from_millis(1000)).await;
+
+    // the ws2812 led on the c6-zero controlled via spi:
+    let spi = esp_hal::spi::master::Spi::new(
+        peripherals.SPI2,
+        esp_hal::spi::master::Config::default()
+            .with_frequency(Rate::from_mhz(3)) //.with_mode(ws2812_spi::MODE),
+            .with_write_bit_order(esp_hal::spi::BitOrder::MsbFirst),
+    )
+    .unwrap()
+    .with_mosi(peripherals.GPIO8);
+    let mut led = ws2812_spi::Ws2812::new(spi);
+
+    let _ = led.write([RGB8::new(0, 0, 0x80)]); // colors are mixed... it's GRB order (weird as the ws2812 sends it properly)
 
     // spawn the tasks:
     let flash = esp_storage::FlashStorage::new(peripherals.FLASH);
@@ -280,6 +286,8 @@ async fn main(spawner: Spawner) -> ! {
     let mut last_stack_link_state = None;
     let mut last_stack_ipv4_addr = None;
 
+    let mut last_boiler_state: Option<BoilerState> = None;
+
     loop {
         wdt.feed(); // feed it every main loop iteration
 
@@ -301,6 +309,35 @@ async fn main(spawner: Spawner) -> ! {
         //     last_data_from_lp = cur_data_from_lp;
         // }
 
+        // log any boiler state changes in prev. format:
+        // Changed: HeaterState { Hzg Vorlauf: 50.0°C / max: 35.5°C, WW Vorlauf: 34.5°C / max: 53.0°C, Brenner: OFF, Pumpe: ON, Fehler: 0x00 } at target 57.32
+        let boiler_state_opt = critical_section::with(|cs| {
+            let bs_ref = BOILER_STATE.borrow_ref(cs);
+            bs_ref.as_ref().map(|(bs, timestamp)| (*bs, *timestamp))
+        });
+        if let Some((bs, _timestamp)) = boiler_state_opt {
+            if last_boiler_state != Some(bs) {
+                info!(
+                    "Changed: HeaterState {{ Hzg Vorlauf: {}°C / max: {}°C, WW Vorlauf: {}°C / max: {}°C, DL Vorlauf: {}°C / max: {}°C, Brenner: {}, Pumpe: {}, Fehler: 0x{:02x}, VL_SOLL2: {}°C, D2: {}, FL: {}, D3: {} }} at target {}°C",
+                    bs.vl_temp2 as f32 / 2.0,
+                    bs.vl_max2 as f32 / 2.0,
+                    bs.ww_temp2 as f32 / 2.0,
+                    bs.ww_max2 as f32 / 2.0,
+                    bs.dl_max_temp2 as f32 / 2.0,
+                    bs.dl_max2 as f32 / 2.0,
+                    if bs.flame == 0 { "OFF" } else { "ON" },
+                    if bs.pump == 0 { "OFF" } else { "ON" },
+                    bs.error,
+                    bs.vl_soll2 as f32 / 2.0,
+                    bs.dummy2,
+                    bs.flags,
+                    bs.dummy3,
+                    REMOTE_VL_SOLL2.load(core::sync::atomic::Ordering::Relaxed) as f32 / 2.0
+                );
+                last_boiler_state = Some(bs);
+            }
+        }
+
         // cyclic regulator trigger
         esp_junkers_bm1::regulator::regulator_tick();
 
@@ -308,29 +345,26 @@ async fn main(spawner: Spawner) -> ! {
         // if boiler state is older than 5s, use red led
         // else use green led
         let now = Instant::now();
-        let led_color = critical_section::with(|cs| {
-            let bs_ref = BOILER_STATE.borrow_ref(cs);
-            if let Some((_bs, timestamp)) = bs_ref.as_ref() {
-                let age = now
-                    .duration_since_epoch()
-                    .saturating_sub(timestamp.duration_since_epoch());
-                if age > esp_hal::time::Duration::from_secs(10) {
-                    if age.as_secs().is_multiple_of(10) {
-                        error!("Boiler state is stale (age: {}s)", age.as_secs());
-                    }
-                    RGB8::new(0, 128, 0) // red (red and green mixed?) 0,0,80 = blue
-                } else if age > esp_hal::time::Duration::from_secs(3) {
-                    // warn!("Boiler state is a bit stale (age: {}s)", age.as_secs());
-                    RGB8::new(128, 128, 0) // yellow = red + green
-                } else {
-                    // info!("Boiler state is fresh (age: {}s)", age.as_secs());
-                    RGB8::new(80, 0, 0) // green
+        let led_color = if let Some((_bs, timestamp)) = boiler_state_opt.as_ref() {
+            let age = now
+                .duration_since_epoch()
+                .saturating_sub(timestamp.duration_since_epoch());
+            if age > esp_hal::time::Duration::from_secs(10) {
+                if age.as_secs().is_multiple_of(10) {
+                    error!("Boiler state is stale (age: {}s)", age.as_secs());
                 }
+                RGB8::new(0, 128, 0) // red (red and green mixed?) 0,0,80 = blue
+            } else if age > esp_hal::time::Duration::from_secs(3) {
+                // warn!("Boiler state is a bit stale (age: {}s)", age.as_secs());
+                RGB8::new(128, 128, 0) // yellow = red + green
             } else {
-                // no boiler state yet
-                RGB8::new(0, 128, 0) // red
+                // info!("Boiler state is fresh (age: {}s)", age.as_secs());
+                RGB8::new(80, 0, 0) // green
             }
-        });
+        } else {
+            // no boiler state yet
+            RGB8::new(0, 128, 0) // red
+        };
         // if we have no link up, blink red every second:
         let led_color = if !link_state {
             if now.duration_since_epoch().as_secs().is_multiple_of(2) {

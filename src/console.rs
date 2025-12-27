@@ -122,6 +122,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             .writeln("  toggle-output - Toggle level shifter output\r")
                             .await?;
                         writer.writeln("  override - Set manual override. Args: <mins> (0 = off), [vl_soll (<0 to ignore)] [pump_onoff]\r").await?;
+                        writer.writeln("  set_remote - Set static remote values. Args: <power> <dummy1> <dummy2>\r").await?;
                     }
                     "exit" => {
                         writer.writeln("Exiting console...\r").await?;
@@ -139,6 +140,63 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         } else {
                             writer.writeln("Level shifter output DISABLED\r").await?;
                         }
+                    }
+                    "set_remote" => {
+                        use crate::i2c::{
+                            REMOTE_DUMMY1,
+                            REMOTE_DUMMY2,
+                            REMOTE_POWER, // , REMOTE_WW_SOLL2,
+                        };
+                        // we expect 3 arguments: power, dummy1, dummy2
+                        let args = parsed.args;
+                        if args.len() < 3 {
+                            writer
+                                .write_error("set_remote command requires 3 arguments\r")
+                                .await?;
+                            continue;
+                        }
+                        let power: u8 = match args[0].parse() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                writer
+                                    .write_error("Failed to parse power argument\r")
+                                    .await?;
+                                continue;
+                            }
+                        };
+                        // let ww_soll2: u8 = match args[1].parse() {
+                        //     Ok(v) => v,
+                        //     Err(_) => {
+                        //         writer
+                        //             .write_error("Failed to parse ww_soll2 argument\r")
+                        //             .await?;
+                        //         continue;
+                        //     }
+                        // };
+                        let dummy1: u8 = match args[1].parse() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                writer
+                                    .write_error("Failed to parse dummy1 argument\r")
+                                    .await?;
+                                continue;
+                            }
+                        };
+                        let dummy2: u8 = match args[2].parse() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                writer
+                                    .write_error("Failed to parse dummy2 argument\r")
+                                    .await?;
+                                continue;
+                            }
+                        };
+                        // set the REMOTE_... values
+                        REMOTE_POWER.store(power, core::sync::atomic::Ordering::Relaxed);
+                        //REMOTE_WW_SOLL2.store(ww_soll2, core::sync::atomic::Ordering::Relaxed);
+                        REMOTE_DUMMY1.store(dummy1, core::sync::atomic::Ordering::Relaxed);
+                        REMOTE_DUMMY2.store(dummy2, core::sync::atomic::Ordering::Relaxed);
+                        writer.writeln("Remote values updated\r").await?;
                     }
                     "override" => {
                         // we expect at least 1 argument: minutes to activate override
@@ -251,11 +309,9 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         {
                             use crate::i2c::OUTPUT_ENABLE;
                             let oe = OUTPUT_ENABLE.load(core::sync::atomic::Ordering::Relaxed);
-                            if !oe {
+                            if oe {
                                 writer
-                                    .write_warning(
-                                        " WARNING: Level shifter output is DISABLED!\r\n",
-                                    )
+                                    .write_warning(" WARNING: Level shifter output is ENABLED!\r\n")
                                     .await?;
                             }
                         }
@@ -322,7 +378,8 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         // current remote values:
                         {
                             use crate::i2c::{
-                                REMOTE_POWER, REMOTE_STOP_PUMP, REMOTE_VL_SOLL2, REMOTE_WW_SOLL2,
+                                REMOTE_DUMMY1, REMOTE_DUMMY2, REMOTE_POWER, REMOTE_STOP_PUMP,
+                                REMOTE_VL_SOLL2, REMOTE_WW_SOLL2,
                             };
                             let power = REMOTE_POWER.load(core::sync::atomic::Ordering::Relaxed);
                             let vl_soll2 =
@@ -331,11 +388,13 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                 REMOTE_WW_SOLL2.load(core::sync::atomic::Ordering::Relaxed);
                             let stop_pump =
                                 REMOTE_STOP_PUMP.load(core::sync::atomic::Ordering::Relaxed);
+                            let dummy1 = REMOTE_DUMMY1.load(core::sync::atomic::Ordering::Relaxed);
+                            let dummy2 = REMOTE_DUMMY2.load(core::sync::atomic::Ordering::Relaxed);
                             writer
                                 .write_info(
                                     &heapless::format!(256;
-                                        " Remote settings:\r\n  Power: {}\r\n  VL_SOLL2: {} ({}°C)\r\n  WW_SOLL2: {} ({}°C)\r\n  STOP_PUMP: {}\r\n",
-                                        power, vl_soll2, vl_soll2 as f32 * 0.5, ww_soll2, ww_soll2 as f32 * 0.5, stop_pump
+                                        " Remote settings:\r\n  Power: {}\r\n  VL_SOLL2: {} ({}°C)\r\n  WW_SOLL2: {} ({}°C)\r\n  STOP_PUMP: {}\r\n  DUMMY1: {}\r\n  DUMMY2: {}\r\n",
+                                        power, vl_soll2, vl_soll2 as f32 * 0.5, ww_soll2, ww_soll2 as f32 * 0.5, stop_pump, dummy1, dummy2
                                     )
                                     .unwrap_or_default(),
                                 )

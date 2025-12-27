@@ -130,13 +130,10 @@ pub fn regulator_tick() {
 
     // set the values in REMOTE_VL_SOLL2 and REMOTE_STOP_PUMP
     if REMOTE_VL_SOLL2.swap(vl_soll2, core::sync::atomic::Ordering::Relaxed) != vl_soll2 {
-        info!(
-            "Regulator: set REMOTE_VL_SOLL2 to {}",
-            vl_soll2 as f32 / 2.0
-        );
+        info!("Changed: REMOTE_VL_SOLL2: {}°C", vl_soll2 as f32 / 2.0);
     }
     let stop_pump = if pump_onoff { 0 } else { 1 };
     if REMOTE_STOP_PUMP.swap(stop_pump, core::sync::atomic::Ordering::Relaxed) != stop_pump {
-        info!("Regulator: set REMOTE_STOP_PUMP to {}", stop_pump);
+        info!("Changed: REMOTE_STOP_PUMP: {}", stop_pump);
     }
 }

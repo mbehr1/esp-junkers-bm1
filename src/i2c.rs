@@ -1,13 +1,13 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU8};
 use critical_section::Mutex;
-use defmt::{error, info};
+use defmt::{info};
 use embassy_time::{Duration, Timer};
 use esp_hal::i2c::slave::SlaveEvent;
 use esp_hal::time::Instant;
-use heapless::spsc::{Consumer, Producer, Queue};
+// use heapless::spsc::{Consumer, Producer, Queue};
 
-const SLAVE_ADDR: u8 = 0x55; // i2c address to simulate Junkers BM1 PCF8570 ram chip (todo use 0x50...)
+const SLAVE_ADDR: u8 = 0x50; // i2c address to simulate Junkers BM1 PCF8570 ram chip
 
 /// our interface to main logic:
 ///
@@ -24,11 +24,31 @@ pub static REMOTE_POWER: AtomicU8 = AtomicU8::new(0xff); // ff = full?
 /// VL_SOLL temperature setting in 0.5 degree C steps
 pub static REMOTE_VL_SOLL2: AtomicU8 = AtomicU8::new(10 * 2); // 10C
 /// WW_SOLL temperature setting in 0.5 degree C steps
-pub static REMOTE_WW_SOLL2: AtomicU8 = AtomicU8::new(10 * 2); // 10C
+pub static REMOTE_WW_SOLL2: AtomicU8 = AtomicU8::new(42 * 2); // 42C
 /// stop pump command from remote control
 pub static REMOTE_STOP_PUMP: AtomicU8 = AtomicU8::new(1); // 1 = pump shall stop
 /// error code to set in remote state
 pub static REMOTE_ERROR: AtomicU8 = AtomicU8::new(0); // no error
+
+/// remote dummy1
+pub static REMOTE_DUMMY1: AtomicU8 = AtomicU8::new(1);
+
+/// remote dummy2
+pub static REMOTE_DUMMY2: AtomicU8 = AtomicU8::new(1);
+/*
+struct RemoteState { // CAN_HEAT_ON_OFF 0x250???
+    power: u8,     // 0x90, similar to CF_HEAT_TARGET_POWER CAN 0x251 ?
+    vl_soll2: u8,  // 0x91, similar to CF_HEAT_TARGET_SUPPLY_TEMP CAN 0x252 ?
+    ww_soll2: u8,  // 0x92, similar to CAN CF_WW_TARGET_SUPPLY_TEMP 0x255 ?
+    dummy: u8,     // 0x93 - 1, CF_WW_NOW_ON 0x254 ????
+    stop_pump: u8, // 0x94, similar to CF_HEAT_PUMP_ECO_MODE CAN 0x253
+    dummy2: u8,    // 0x95 - 1, CF_WW_TARGET_SUPPLY_TEMP? (0x255?)
+    error: u8,
+    dummy3: [u8; 7],
+    dummy4: u8,    // CF_TR_OUTSIDE_TEMP_CTRL 0x258???
+    checksum: u8, // 0x2c
+}
+ */
 
 // the real PCF8570 seems quite fast:
 // after write addr before read it keeps (only) SCL low for 135-150us.
@@ -41,44 +61,44 @@ pub static REMOTE_ERROR: AtomicU8 = AtomicU8::new(0); // no error
 static RAM: Mutex<RefCell<BMRam>> = Mutex::new(RefCell::new(BMRam::new()));
 static RAM_NEXT_ADDR: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-struct ReceiveData {
-    data: heapless::Vec<u8, 32>,
-    reason: SlaveEvent,
-}
+// struct ReceiveData {
+//     data: heapless::Vec<u8, 32>,
+//     reason: SlaveEvent,
+// }
 
-impl defmt::Format for ReceiveData {
-    fn format(&self, f: defmt::Formatter) {
-        let (reason_str, arg) = match self.reason {
-            SlaveEvent::StretchRxFull(a) => ("StretchRxFull", a),
-            SlaveEvent::StretchAddrMatch(a) => ("AddressMatch", a),
-            SlaveEvent::StretchTxEmpty => ("StretchTxEmpty", 0),
-            SlaveEvent::TransComplete(a) => ("TransComplete", a),
-            SlaveEvent::RxFifoWatermark(a) => ("RxFifoWatermark", a),
-        };
-        defmt::write!(
-            f,
-            "ReceiveData {{ reason: {}({}), data: {:02x} }}",
-            reason_str,
-            arg,
-            self.data
-        );
-    }
-}
+// impl defmt::Format for ReceiveData {
+//     fn format(&self, f: defmt::Formatter) {
+//         let (reason_str, arg) = match self.reason {
+//             SlaveEvent::StretchRxFull(a) => ("StretchRxFull", a),
+//             SlaveEvent::StretchAddrMatch(a) => ("AddressMatch", a),
+//             SlaveEvent::StretchTxEmpty => ("StretchTxEmpty", 0),
+//             SlaveEvent::TransComplete(a) => ("TransComplete", a),
+//             SlaveEvent::RxFifoWatermark(a) => ("RxFifoWatermark", a),
+//         };
+//         defmt::write!(
+//             f,
+//             "ReceiveData {{ reason: {}({}), data: {:02x} }}",
+//             reason_str,
+//             arg,
+//             self.data
+//         );
+//     }
+// }
 
-type QueueProducer = Mutex<RefCell<Option<Producer<'static, ReceiveData>>>>;
-type QueueConsumer = Mutex<RefCell<Option<Consumer<'static, ReceiveData>>>>;
+// type QueueProducer = Mutex<RefCell<Option<Producer<'static, ReceiveData>>>>;
+// type QueueConsumer = Mutex<RefCell<Option<Consumer<'static, ReceiveData>>>>;
 
-static PC: (QueueProducer, QueueConsumer) = {
-    static mut Q: Queue<ReceiveData, 16> = Queue::new();
-    // SAFETY: `Q` is only accessible in this scope.
-    #[allow(static_mut_refs)]
-    let (p, c) = unsafe { Q.split_const() };
+// static PC: (QueueProducer, QueueConsumer) = {
+//     static mut Q: Queue<ReceiveData, 16> = Queue::new();
+//     // SAFETY: `Q` is only accessible in this scope.
+//     #[allow(static_mut_refs)]
+//     let (p, c) = unsafe { Q.split_const() };
 
-    (
-        Mutex::new(RefCell::new(Some(p))),
-        Mutex::new(RefCell::new(Some(c))),
-    )
-};
+//     (
+//         Mutex::new(RefCell::new(Some(p))),
+//         Mutex::new(RefCell::new(Some(c))),
+//     )
+// };
 
 #[esp_hal::ram]
 fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8]) -> usize {
@@ -86,18 +106,18 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
     // RECEIVED_CALL_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // RECEIVED_DATA_COUNT.fetch_add(data.len() as u32, core::sync::atomic::Ordering::Relaxed);
 
-    let producer = {
-        static mut P: Option<Producer<'_, ReceiveData>> = None;
-        // SAFETY: Mutable access to `P` is allowed exclusively in this scope
-        // and `interrupt` cannot be called directly or preempt itself.
-        //unsafe { &mut P }
-        unsafe {
-            let p = &raw mut P;
-            (*p).get_or_insert_with(|| {
-                critical_section::with(|cs| PC.0.borrow_ref_mut(cs).take().unwrap())
-            })
-        }
-    };
+    // let producer = {
+    //     static mut P: Option<Producer<'_, ReceiveData>> = None;
+    //     // SAFETY: Mutable access to `P` is allowed exclusively in this scope
+    //     // and `interrupt` cannot be called directly or preempt itself.
+    //     //unsafe { &mut P }
+    //     unsafe {
+    //         let p = &raw mut P;
+    //         (*p).get_or_insert_with(|| {
+    //             critical_section::with(|cs| PC.0.borrow_ref_mut(cs).take().unwrap())
+    //         })
+    //     }
+    // };
 
     match reason {
         SlaveEvent::StretchAddrMatch(offset) => {
@@ -166,14 +186,14 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
     };
 
     // we enqueue received data only for debugging purposes, not needed for functionality
-    let _ = producer.enqueue(ReceiveData {
-        data: {
-            let mut v = heapless::Vec::<u8, 32>::new();
-            let _ = v.extend_from_slice(data); // ignore error if data too long
-            v
-        },
-        reason,
-    });
+    // let _ = producer.enqueue(ReceiveData {
+    //     data: {
+    //         let mut v = heapless::Vec::<u8, 32>::new();
+    //         let _ = v.extend_from_slice(data); // ignore error if data too long
+    //         v
+    //     },
+    //     reason,
+    // });
     written
 }
 
@@ -206,6 +226,8 @@ pub async fn i2c_task(
     // - is it normal that a write ends with a NAK from master side? The problem is that the slave doesn't
     //  know how many bytes the master wants to read, so it "offers" more bytes with the write request.
 
+    // enable pullup on SDA and SCL:
+
     let mut i2c = esp_hal::i2c::slave::I2c::new(i2c_peripheral, config)
         .expect("Failed to create I2C slave")
         .with_sda(gpio_sda)
@@ -216,9 +238,9 @@ pub async fn i2c_task(
     info!("I2C slave initialized with address 0x{:02X}", SLAVE_ADDR);
     // let mut count = 0u32;
     gpio0.set_high(); // enable level shifter output to boiler side
-    OUTPUT_ENABLE.store(true, core::sync::atomic::Ordering::Relaxed);
+    OUTPUT_ENABLE.store(false, core::sync::atomic::Ordering::Relaxed); // level shifter not needed anymore
 
-    let mut consumer = critical_section::with(|cs| PC.1.borrow_ref_mut(cs).take().unwrap());
+    // let mut consumer = critical_section::with(|cs| PC.1.borrow_ref_mut(cs).take().unwrap());
     loop {
         // count += 1;
         // info!(
@@ -227,14 +249,14 @@ pub async fn i2c_task(
         //     RECEIVED_DATA_COUNT.load(core::sync::atomic::Ordering::Relaxed),
         //     REQUEST_CALL_COUNT.load(core::sync::atomic::Ordering::Relaxed),
         // );
-        while let Some(rcvd_data) = consumer.dequeue() {
-            //info!("I2C: Data received {}", rcvd_data);
-            if let SlaveEvent::StretchTxEmpty = rcvd_data.reason {
-                error!("I2C: StretchTxEmpty event received!");
-            } else {
-                //info!("I2C: Data received {}", rcvd_data);
-            }
-        }
+        // while let Some(rcvd_data) = consumer.dequeue() {
+        //     //info!("I2C: Data received {}", rcvd_data);
+        //     if let SlaveEvent::StretchTxEmpty = rcvd_data.reason {
+        //         error!("I2C: StretchTxEmpty event received!");
+        //     } else {
+        //         // info!("I2C: Data received {}", rcvd_data);
+        //     }
+        // }
 
         // from i2c.txt the sequence is:
         // boiler reads from 0xfe 2 bytes (expects 0xfc 0x03)
@@ -258,9 +280,9 @@ pub async fn i2c_task(
                     power: REMOTE_POWER.load(core::sync::atomic::Ordering::Relaxed),
                     vl_soll2: REMOTE_VL_SOLL2.load(core::sync::atomic::Ordering::Relaxed),
                     ww_soll2: REMOTE_WW_SOLL2.load(core::sync::atomic::Ordering::Relaxed),
-                    dummy: 0x01, // (count / 10) as u8,
+                    dummy: REMOTE_DUMMY1.load(core::sync::atomic::Ordering::Relaxed),
                     stop_pump: REMOTE_STOP_PUMP.load(core::sync::atomic::Ordering::Relaxed),
-                    dummy2: 1,
+                    dummy2: REMOTE_DUMMY2.load(core::sync::atomic::Ordering::Relaxed),
                     error: REMOTE_ERROR.load(core::sync::atomic::Ordering::Relaxed),
                     dummy3: [0; 7],
                     dummy4: 0xff,
@@ -272,7 +294,7 @@ pub async fn i2c_task(
                 ram.ram[0x14] = 0;
                 ram.ram[RAM_BOILER_AVAILABLE_OFFSET] = 0; // mark as read
                 ram.ram[RAM_REMOTE_AVAILABLE_OFFSET] = 1; // mark as available
-                // todo the c code sets             ram[0x18] = 0x10; as well???
+                ram.ram[0x18] = 0x10; // set by the c-code as well. No idea what for...
                 let mut bs_ref = BOILER_STATE.borrow_ref_mut(cs);
                 *bs_ref = Some((boiler_state, Instant::now()));
             }
@@ -359,22 +381,23 @@ impl BMRam {
     }
 }
 
-#[derive(defmt::Format, Copy, Clone)]
+/// MARK: BoilerState
+#[derive(defmt::Format, Copy, Clone, PartialEq, Eq)]
 pub struct BoilerState {
     // e.g. 0x89 0x40 0x78 0x00 0x8A 0x4A 0x00 0x89 0x01 0x01 0x01 0x63 0x0F
-    vl_max2: u8,      // 0x20 e.g. 0x89 = 137 = 68.5C
-    vl_temp2: u8,     // 0x21 e.g. 0x40 = 64 = 32.0C
-    dl_max2: u8,      // 0x22 e.g. 0x78 = 120 = 60.0C
-    dl_max_temp2: u8, // 0x23 e.g. 0x00 = 0 = 0.0C
-    ww_max2: u8,      // 0x24 e.g. 0x8a = 138 = 69.0C
-    ww_temp2: u8,     // 0x25 e.g. 0x4a = 74 = 37.0C
-    error: u8,        // 0x26 e.g. 0x00 = no error
-    dummy1: u8,       // 0x27 e.g. 0x89 = 137 = ? (looks like a temp as well)
-    dummy2: u8,       // 0x28 e.g. 0x01 = 1 = on/off?
-    flame: u8,        // 0x29 e.g. 0x01 = 1 = flame on
-    pump: u8,         // 0x2a e.g. 0x01 = 1 = pump on
-    flags: u8,        // 0x2b BOILER_FLAG e.g. 0x63 = 0110_0011 ???
-    dummy3: u8,
+    pub vl_max2: u8,      // 0x20 e.g. 0x89 = 137 = 68.5C
+    pub vl_temp2: u8,     // 0x21 e.g. 0x40 = 64 = 32.0C
+    pub dl_max2: u8,      // 0x22 e.g. 0x78 = 120 = 60.0C
+    pub dl_max_temp2: u8, // 0x23 e.g. 0x00 = 0 = 0.0C
+    pub ww_max2: u8,      // 0x24 e.g. 0x8a = 138 = 69.0C
+    pub ww_temp2: u8,     // 0x25 e.g. 0x4a = 74 = 37.0C
+    pub error: u8,        // 0x26 e.g. 0x00 = no error
+    pub vl_soll2: u8, // 0x27 e.g. 0x89 = 137 = 68.5C target value for vl_soll2 after limit to vl_max2
+    pub dummy2: u8,   // 0x28 e.g. 0x01 = 1 = on/off?
+    pub flame: u8,    // 0x29 e.g. 0x01 = 1 = flame on
+    pub pump: u8,     // 0x2a e.g. 0x01 = 1 = pump on
+    pub flags: u8,    // 0x2b BOILER_FLAG e.g. 0x63 = 0110_0011 ???
+    pub dummy3: u8,
 }
 // assert size of BoilerState
 const _: () = assert!(core::mem::size_of::<BoilerState>() == 13);
@@ -411,7 +434,7 @@ impl core::fmt::Debug for BoilerState {
                 &format_args!("{} ({}°C)", self.ww_temp2, self.ww_temp2 as f32 * 0.5),
             )
             .field("error", &self.error)
-            .field("dummy1", &self.dummy1)
+            .field("vl_soll2", &self.vl_soll2)
             .field("dummy2", &self.dummy2)
             .field("flame", &self.flame)
             .field("pump", &self.pump)
@@ -422,15 +445,16 @@ impl core::fmt::Debug for BoilerState {
 
 #[allow(unused)]
 struct RemoteState {
-    power: u8,     // 0x90
-    vl_soll2: u8,  // 0x91
-    ww_soll2: u8,  // 0x92
-    dummy: u8,     // 0x93 - 1
-    stop_pump: u8, // 0x94
-    dummy2: u8,    // 0x95 - 1
+    // CAN_HEAT_ON_OFF 0x250???
+    power: u8,     // 0x90, similar to CAN 0x251 ?
+    vl_soll2: u8,  // 0x91, similar to CAN 0x252 ?
+    ww_soll2: u8,  // 0x92, similar to CAN CF_WW_TARGET_SUPPLY_TEMP 0x255 ?
+    dummy: u8,     // 0x93 - 1, CF_WW_NOW_ON 0x254 ????
+    stop_pump: u8, // 0x94, similar to CAN 0x253
+    dummy2: u8,    // 0x95 - 1, CF_WW_TARGET_SUPPLY_TEMP? (0x255?)
     error: u8,
     dummy3: [u8; 7],
-    dummy4: u8,
+    dummy4: u8,   // CF_TR_OUTSIDE_TEMP_CTRL 0x258???
     checksum: u8, // 0x2c
 }
 // assert size of RemoteState
