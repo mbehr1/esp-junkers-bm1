@@ -63,7 +63,14 @@ pub fn regulator_tick() {
 
         let devices = devices.borrow();
         for device in devices.iter() {
-            let valve_position = device.valve_position as f32; // TODO limit to 0..1.0
+            let valve_position = (device.valve_position as f32).clamp(0.0, 1.0);
+            // if the current temperature is well above the set point, consider valve position as 0
+            // as its likely that the valve will be closed soon and we dont want to overheat
+            let valve_position = if device.valve_act_temp >= device.set_point_temp + 1.0 {
+                0.0
+            } else {
+                valve_position
+            };
             if valve_position < min {
                 min = valve_position;
             }
