@@ -45,7 +45,7 @@ struct RemoteState { // CAN_HEAT_ON_OFF 0x250???
     dummy2: u8,    // 0x95 - 1, ??? CF_TR_OUTSIDE_TEMP_CTRL 0x258???
     error: u8,
     dummy3: [u8; 7],
-    dummy4: u8,    // - 0xff, ??? 
+    dummy4: u8,    // - 0xff, ???
     checksum: u8, // 0x2c
 }
  */
@@ -161,7 +161,7 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
 
     // we write if the data_to_write is non empty
     // logically we should only do it on: StretchAddrMatch and StretchTxEmpty
-    let written = if !data_to_write.is_empty() {
+    if !data_to_write.is_empty() {
         assert!(matches!(
             reason,
             SlaveEvent::StretchAddrMatch(_) | SlaveEvent::StretchTxEmpty
@@ -183,7 +183,7 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
         written
     } else {
         0
-    };
+    }
 
     // we enqueue received data only for debugging purposes, not needed for functionality
     // let _ = producer.enqueue(ReceiveData {
@@ -194,7 +194,7 @@ fn on_i2c_slave_event(reason: SlaveEvent, data: &[u8], data_to_write: &mut [u8])
     //     },
     //     reason,
     // });
-    written
+    // written
 }
 
 // MARK: i2c task
@@ -402,11 +402,14 @@ pub struct BoilerState {
     // 66->99 (+0x21) (Brenner aus->an? nach VL Bedarf)???
     // 99 -> 67 -> 66... (Zündung???) Transitiion von Brenner an wg. VL zu Brenner aus
     // 66 -> 98 -> 99 Transition von Brenner aus wg. WW zu Brenner an
+
+    // 96/0x60 -> Brenner off, pumpe off
     // Flags:
     // 0x01 = VL Bedarf ??? / Gasventil???
     // 0x04 = Warmwasser Bedarf ???
-    // 0x20 = Soll Brenner an ??? / Status Gasventil???
-    pub dummy3: u8,   // Flags: 15/0x0F or 7/0x07 ?
+    // 0x20 = Soll Brenner an ??? / Status Gasventil??? (passt nichts zu 96...)
+    // 0x40 = ???
+    pub dummy3: u8, // Flags: 15/0x0F or 7/0x07 ?
 }
 // assert size of BoilerState
 const _: () = assert!(core::mem::size_of::<BoilerState>() == 13);

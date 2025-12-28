@@ -315,27 +315,27 @@ async fn main(spawner: Spawner) -> ! {
             let bs_ref = BOILER_STATE.borrow_ref(cs);
             bs_ref.as_ref().map(|(bs, timestamp)| (*bs, *timestamp))
         });
-        if let Some((bs, _timestamp)) = boiler_state_opt {
-            if last_boiler_state != Some(bs) {
-                info!(
-                    "Changed: HeaterState {{ Hzg Vorlauf: {}°C / max: {}°C, WW Vorlauf: {}°C / max: {}°C, DL Vorlauf: {}°C / max: {}°C, Brenner: {}, Pumpe: {}, Fehler: 0x{:02x}, VL_SOLL2: {}°C, D2: {}, FL: {}, D3: {} }} at target {}°C",
-                    bs.vl_temp2 as f32 / 2.0,
-                    bs.vl_max2 as f32 / 2.0,
-                    bs.ww_temp2 as f32 / 2.0,
-                    bs.ww_max2 as f32 / 2.0,
-                    bs.dl_max_temp2 as f32 / 2.0,
-                    bs.dl_max2 as f32 / 2.0,
-                    if bs.flame == 0 { "OFF" } else { "ON" },
-                    if bs.pump == 0 { "OFF" } else { "ON" },
-                    bs.error,
-                    bs.vl_soll2 as f32 / 2.0,
-                    bs.dummy2,
-                    bs.flags,
-                    bs.dummy3,
-                    REMOTE_VL_SOLL2.load(core::sync::atomic::Ordering::Relaxed) as f32 / 2.0
-                );
-                last_boiler_state = Some(bs);
-            }
+        if let Some((bs, _timestamp)) = boiler_state_opt
+            && last_boiler_state != Some(bs)
+        {
+            info!(
+                "Changed: HeaterState {{ Hzg Vorlauf: {}°C / max: {}°C, WW Vorlauf: {}°C / max: {}°C, DL Vorlauf: {}°C / max: {}°C, Brenner: {}, Pumpe: {}, Fehler: 0x{:02x}, VL_SOLL2: {}°C, D2: {}, FL: {:02x}, D3: {:02x} }} at target {}°C",
+                bs.vl_temp2 as f32 / 2.0,
+                bs.vl_max2 as f32 / 2.0,
+                bs.ww_temp2 as f32 / 2.0,
+                bs.ww_max2 as f32 / 2.0,
+                bs.dl_max_temp2 as f32 / 2.0,
+                bs.dl_max2 as f32 / 2.0,
+                if bs.flame == 0 { "OFF" } else { "ON" },
+                if bs.pump == 0 { "OFF" } else { "ON" },
+                bs.error,
+                bs.vl_soll2 as f32 / 2.0,
+                bs.dummy2,
+                bs.flags,
+                bs.dummy3,
+                REMOTE_VL_SOLL2.load(core::sync::atomic::Ordering::Relaxed) as f32 / 2.0
+            );
+            last_boiler_state = Some(bs);
         }
 
         // cyclic regulator trigger

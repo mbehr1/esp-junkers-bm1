@@ -149,7 +149,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                     "set_ww_soll2" => {
                         use crate::i2c::REMOTE_WW_SOLL2;
                         let args = parsed.args;
-                        if args.len() < 1 {
+                        if args.len() != 1 {
                             writer
                                 .write_error("set_ww_soll2 command requires 1 argument\r")
                                 .await?;
