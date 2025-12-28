@@ -1,7 +1,7 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU8};
 use critical_section::Mutex;
-use defmt::{info};
+use defmt::info;
 use embassy_time::{Duration, Timer};
 use esp_hal::i2c::slave::SlaveEvent;
 use esp_hal::time::Instant;
@@ -24,7 +24,7 @@ pub static REMOTE_POWER: AtomicU8 = AtomicU8::new(0xff); // ff = full?
 /// VL_SOLL temperature setting in 0.5 degree C steps
 pub static REMOTE_VL_SOLL2: AtomicU8 = AtomicU8::new(10 * 2); // 10C
 /// WW_SOLL temperature setting in 0.5 degree C steps
-pub static REMOTE_WW_SOLL2: AtomicU8 = AtomicU8::new(42 * 2); // 42C
+pub static REMOTE_WW_SOLL2: AtomicU8 = AtomicU8::new(50 * 2); // 50C
 /// stop pump command from remote control
 pub static REMOTE_STOP_PUMP: AtomicU8 = AtomicU8::new(1); // 1 = pump shall stop
 /// error code to set in remote state
@@ -42,10 +42,10 @@ struct RemoteState { // CAN_HEAT_ON_OFF 0x250???
     ww_soll2: u8,  // 0x92, similar to CAN CF_WW_TARGET_SUPPLY_TEMP 0x255 ?
     dummy: u8,     // 0x93 - 1, CF_WW_NOW_ON 0x254 ????
     stop_pump: u8, // 0x94, similar to CF_HEAT_PUMP_ECO_MODE CAN 0x253
-    dummy2: u8,    // 0x95 - 1, CF_WW_TARGET_SUPPLY_TEMP? (0x255?)
+    dummy2: u8,    // 0x95 - 1, ??? CF_TR_OUTSIDE_TEMP_CTRL 0x258???
     error: u8,
     dummy3: [u8; 7],
-    dummy4: u8,    // CF_TR_OUTSIDE_TEMP_CTRL 0x258???
+    dummy4: u8,    // - 0xff, ??? 
     checksum: u8, // 0x2c
 }
  */
@@ -396,8 +396,17 @@ pub struct BoilerState {
     pub dummy2: u8,   // 0x28 e.g. 0x01 = 1 = on/off?
     pub flame: u8,    // 0x29 e.g. 0x01 = 1 = flame on
     pub pump: u8,     // 0x2a e.g. 0x01 = 1 = pump on
-    pub flags: u8,    // 0x2b BOILER_FLAG e.g. 0x63 = 0110_0011 ???
-    pub dummy3: u8,
+    pub flags: u8,    // 0x2b BOILER_FLAG e.g. 99/0x63 = 0110_0011 ???
+    // 103/0x67 = DL/Warmwasser Bedarf? 66/0x42 = (-0x25 kein WW Bedarf... Normalbetrieb?), FL98/0x62 = ...?
+    // 99/0x63->66/0x42 (-0x21) (Brenner an->aus? nach VL Bedarf)???
+    // 66->99 (+0x21) (Brenner aus->an? nach VL Bedarf)???
+    // 99 -> 67 -> 66... (Zündung???) Transitiion von Brenner an wg. VL zu Brenner aus
+    // 66 -> 98 -> 99 Transition von Brenner aus wg. WW zu Brenner an
+    // Flags:
+    // 0x01 = VL Bedarf ??? / Gasventil???
+    // 0x04 = Warmwasser Bedarf ???
+    // 0x20 = Soll Brenner an ??? / Status Gasventil???
+    pub dummy3: u8,   // Flags: 15/0x0F or 7/0x07 ?
 }
 // assert size of BoilerState
 const _: () = assert!(core::mem::size_of::<BoilerState>() == 13);
@@ -443,6 +452,7 @@ impl core::fmt::Debug for BoilerState {
     }
 }
 
+/// MARK: RemoteState
 #[allow(unused)]
 struct RemoteState {
     // CAN_HEAT_ON_OFF 0x250???
@@ -451,7 +461,7 @@ struct RemoteState {
     ww_soll2: u8,  // 0x92, similar to CAN CF_WW_TARGET_SUPPLY_TEMP 0x255 ?
     dummy: u8,     // 0x93 - 1, CF_WW_NOW_ON 0x254 ????
     stop_pump: u8, // 0x94, similar to CAN 0x253
-    dummy2: u8,    // 0x95 - 1, CF_WW_TARGET_SUPPLY_TEMP? (0x255?)
+    dummy2: u8,    // 0x95 - 1, ???
     error: u8,
     dummy3: [u8; 7],
     dummy4: u8,   // CF_TR_OUTSIDE_TEMP_CTRL 0x258???
