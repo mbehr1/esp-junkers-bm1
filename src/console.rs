@@ -123,6 +123,11 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             .await?;
                         writer.writeln("  override - Set manual override. Args: <mins> (0 = off), [vl_soll (<0 to ignore)] [pump_onoff]\r").await?;
                         writer.writeln("  set_remote - Set static remote values. Args: <power> <dummy1> <dummy2>\r").await?;
+                        writer
+                            .writeln(
+                                "  set_ww_soll2 - Set remote WW_SOLL2 value. Args: <ww_soll2>\r",
+                            )
+                            .await?;
                     }
                     "exit" => {
                         writer.writeln("Exiting console...\r").await?;
@@ -140,6 +145,27 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         } else {
                             writer.writeln("Level shifter output DISABLED\r").await?;
                         }
+                    }
+                    "set_ww_soll2" => {
+                        use crate::i2c::REMOTE_WW_SOLL2;
+                        let args = parsed.args;
+                        if args.len() < 1 {
+                            writer
+                                .write_error("set_ww_soll2 command requires 1 argument\r")
+                                .await?;
+                            continue;
+                        }
+                        let ww_soll2: u8 = match args[0].parse() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                writer
+                                    .write_error("Failed to parse ww_soll2 argument\r")
+                                    .await?;
+                                continue;
+                            }
+                        };
+                        REMOTE_WW_SOLL2.store(ww_soll2, core::sync::atomic::Ordering::Relaxed);
+                        writer.writeln("Remote WW_SOLL2 value updated\r").await?;
                     }
                     "set_remote" => {
                         use crate::i2c::{
