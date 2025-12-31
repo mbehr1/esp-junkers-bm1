@@ -96,15 +96,16 @@ pub fn regulator_tick() {
             vl_soll2 = 50 * 2;
             pump_onoff = true;
         } else if valve_pos_max > 0.5 {
-            vl_soll2 = 45 * 2;
+            vl_soll2 = 38 * 2;
             pump_onoff = true;
-        } else if valve_pos_max > 0.2 || valve_pos_avg > 0.1 {
-            vl_soll2 = 40 * 2;
-            pump_onoff = true;
-        } else if valve_pos_max > 0.1 {
-            vl_soll2 = 10 * 2; // off here but pump on
+        } else if valve_pos_max > 0.25 || valve_pos_avg > 0.1 {
+            vl_soll2 = 32 * 2;
             pump_onoff = true;
         } else {
+            /* if valve_pos_max > 0.1 {
+                vl_soll2 = 10 * 2; // off here but pump on
+                pump_onoff = true;
+            } else { */
             // all valves closed (<= 0.1 / 10%)
             vl_soll2 = 10 * 2;
             pump_onoff = false;
