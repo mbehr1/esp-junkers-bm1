@@ -1,5 +1,6 @@
 # settings
 cfg.toml
+cfg_*.toml
 
 # ota files generated
 *.ota

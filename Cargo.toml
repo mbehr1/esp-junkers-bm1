@@ -8,6 +8,10 @@ version      = "0.1.0"
 name = "esp-junkers-bm1"
 path = "./src/bin/main.rs"
 
+[features]
+default = []
+local_test = [] # used for local test builds, not for production firmware!
+
 [dependencies]
 critical-section = "1.2.0"
 defmt                  = {version = "1.0.1", features = ["encoding-rzcobs"]}

@@ -7,7 +7,7 @@
 // [] refactor ota to standalone crate
 // [] refactor defmt_via_tcp to standalone crate
 // [x] add console to interact (reset, overwrite, read/write)
-
+#![feature(const_trait_impl, const_cmp)]
 #![no_std]
 #![no_main]
 #![deny(
@@ -59,6 +59,8 @@ macro_rules! mk_static {
 
 #[toml_cfg::toml_config]
 struct ConfigToml {
+    #[default("local-test")]
+    pub build_type: &'static str,
     #[default("hostnameToUseForDHCP")]
     pub hostname: &'static str,
     #[default("ssidToConnectTo")]
@@ -94,6 +96,14 @@ struct ConfigToml {
     #[default(65455)]
     pub log_server_port: u16,
 }
+
+// static assert that build_type is set correctly
+// if feature "local_test" is set, build_type must be "local-test", else "production"
+const _: () = assert!(if cfg!(feature = "local_test") {
+    CONFIG_TOML.build_type == "local-test"
+} else {
+    CONFIG_TOML.build_type == "production"
+});
 
 static mut RNG_INSTANCE: Option<Rng> = None;
 
