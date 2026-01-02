@@ -508,7 +508,14 @@ async fn cloud_connection_task(
     let tls_ref = tls.reference();
 
     use embassy_net::tcp::client::{TcpClient, TcpClientState};
-    let tcp_state = mk_static!(TcpClientState::<1, 16384, 16640>, TcpClientState::new());
+    let tcp_state = mk_static!(
+        TcpClientState::<
+            1,
+            4096, /* should be enough for TX as we dont transmit that much! 16384*/
+            16640,
+        >,
+        TcpClientState::new()
+    );
 
     loop {
         // Wait for network to be ready
@@ -679,7 +686,7 @@ async fn cloud_connection_task(
 
             // add /hmip/home/getCurrentState
             url.push_str("/hmip/home/getCurrentState").unwrap();
-            info!("Full REST URL for getCurrentState: {}", url);
+            // info!("Full REST URL for getCurrentState: {}", url);
             let _rest_res = single_https_request(
                 reqwless::request::Method::POST,
                 &url,

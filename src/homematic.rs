@@ -643,6 +643,7 @@ where
         esp_alloc::HEAP.free()
     );
 
+    // this will consume roughly 46kb of heap for esp_mbedtls::asynch::Session
     match client.request(method, url).await {
         Ok(request) => {
             info!(
@@ -651,7 +652,7 @@ where
             );
             let mut request = request.headers(headers).body(body);
             //info!("HTTP request prepared, sending...");
-            let mut rx_buffer = [0_u8; (100 * 1024)];
+            let mut rx_buffer = [0_u8; (100 * 1024)]; // TODO reduce size!!!
             let response = request.send(&mut rx_buffer).await?;
             info!(
                 "HTTP request sent, response status: {}, content_length: {}",
