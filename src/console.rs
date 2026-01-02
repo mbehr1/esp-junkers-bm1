@@ -84,12 +84,10 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
     let mut writer = TerminalWriter::new(&mut tx, true);
 
     writer.clear_screen().await?;
-    writer.writeln("=== esp-junkers-bm1 console ===\r").await?;
+    writer.writeln("=== esp-junkers-bm1 console ===").await?;
     writer
-        .writeln("Type 'help' for available commands\r")
+        .writeln("Type 'help' for available commands\n")
         .await?;
-    writer.writeln("\r").await?;
-
     // Main command loop
     loop {
         match reader
@@ -105,45 +103,41 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                 let parsed = match CommandParser::parse_simple::<4, 128>(&command) {
                     Ok(p) => p,
                     Err(_) => {
-                        writer.write_error("Failed to parse command\r\n").await?;
+                        writer.write_error("Failed to parse command\n").await?;
                         continue;
                     }
                 };
                 match parsed.name() {
                     "help" => {
-                        writer.writeln("Available commands:\r").await?;
-                        writer.writeln("  help   - Show this message\r").await?;
-                        writer.writeln("  exit   - Exit console\r").await?;
+                        writer.writeln("Available commands:").await?;
+                        writer.writeln("  help   - Show this message").await?;
+                        writer.writeln("  exit   - Exit console").await?;
+                        writer.writeln("  info   - Show system information").await?;
+                        writer.writeln("  restart- Restart the system").await?;
                         writer
-                            .writeln("  info   - Show system information\r")
+                            .writeln("  toggle-output - Toggle level shifter output")
                             .await?;
-                        writer.writeln("  restart- Restart the system\r").await?;
+                        writer.writeln("  override - Set manual override. Args: <mins> (0 = off), [vl_soll (<0 to ignore)] [pump_onoff]").await?;
+                        writer.writeln("  set_remote - Set static remote values. Args: <power> <dummy1> <dummy2>").await?;
                         writer
-                            .writeln("  toggle-output - Toggle level shifter output\r")
-                            .await?;
-                        writer.writeln("  override - Set manual override. Args: <mins> (0 = off), [vl_soll (<0 to ignore)] [pump_onoff]\r").await?;
-                        writer.writeln("  set_remote - Set static remote values. Args: <power> <dummy1> <dummy2>\r").await?;
-                        writer
-                            .writeln(
-                                "  set_ww_soll2 - Set remote WW_SOLL2 value. Args: <ww_soll2>\r",
-                            )
+                            .writeln("  set_ww_soll2 - Set remote WW_SOLL2 value. Args: <ww_soll2>")
                             .await?;
                     }
                     "exit" => {
-                        writer.writeln("Exiting console...\r").await?;
+                        writer.writeln("Exiting console...").await?;
                         break;
                     }
                     "restart" => {
-                        writer.writeln("Restarting system...\r").await?;
+                        writer.writeln("Restarting system...").await?;
                         return Ok(ExitReason::Restart); // caller will handle restart to ensure proper connection close
                     }
                     "toggle-output" => {
                         use crate::i2c::OUTPUT_ENABLE;
                         let old_oe = OUTPUT_ENABLE.fetch_not(core::sync::atomic::Ordering::Relaxed);
                         if !old_oe {
-                            writer.writeln("Level shifter output ENABLED\r").await?;
+                            writer.writeln("Level shifter output ENABLED").await?;
                         } else {
-                            writer.writeln("Level shifter output DISABLED\r").await?;
+                            writer.writeln("Level shifter output DISABLED").await?;
                         }
                     }
                     "set_ww_soll2" => {
@@ -151,7 +145,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         let args = parsed.args;
                         if args.len() != 1 {
                             writer
-                                .write_error("set_ww_soll2 command requires 1 argument\r")
+                                .write_error("set_ww_soll2 command requires 1 argument\n")
                                 .await?;
                             continue;
                         }
@@ -159,13 +153,13 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             Ok(v) => v,
                             Err(_) => {
                                 writer
-                                    .write_error("Failed to parse ww_soll2 argument\r")
+                                    .write_error("Failed to parse ww_soll2 argument\n")
                                     .await?;
                                 continue;
                             }
                         };
                         REMOTE_WW_SOLL2.store(ww_soll2, core::sync::atomic::Ordering::Relaxed);
-                        writer.writeln("Remote WW_SOLL2 value updated\r").await?;
+                        writer.writeln("Remote WW_SOLL2 value updated").await?;
                     }
                     "set_remote" => {
                         use crate::i2c::{
@@ -177,7 +171,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         let args = parsed.args;
                         if args.len() < 3 {
                             writer
-                                .write_error("set_remote command requires 3 arguments\r")
+                                .write_error("set_remote command requires 3 arguments\n")
                                 .await?;
                             continue;
                         }
@@ -185,25 +179,16 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             Ok(v) => v,
                             Err(_) => {
                                 writer
-                                    .write_error("Failed to parse power argument\r")
+                                    .write_error("Failed to parse power argument\n")
                                     .await?;
                                 continue;
                             }
                         };
-                        // let ww_soll2: u8 = match args[1].parse() {
-                        //     Ok(v) => v,
-                        //     Err(_) => {
-                        //         writer
-                        //             .write_error("Failed to parse ww_soll2 argument\r")
-                        //             .await?;
-                        //         continue;
-                        //     }
-                        // };
                         let dummy1: u8 = match args[1].parse() {
                             Ok(v) => v,
                             Err(_) => {
                                 writer
-                                    .write_error("Failed to parse dummy1 argument\r")
+                                    .write_error("Failed to parse dummy1 argument\n")
                                     .await?;
                                 continue;
                             }
@@ -212,7 +197,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             Ok(v) => v,
                             Err(_) => {
                                 writer
-                                    .write_error("Failed to parse dummy2 argument\r")
+                                    .write_error("Failed to parse dummy2 argument\n")
                                     .await?;
                                 continue;
                             }
@@ -222,14 +207,14 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         //REMOTE_WW_SOLL2.store(ww_soll2, core::sync::atomic::Ordering::Relaxed);
                         REMOTE_DUMMY1.store(dummy1, core::sync::atomic::Ordering::Relaxed);
                         REMOTE_DUMMY2.store(dummy2, core::sync::atomic::Ordering::Relaxed);
-                        writer.writeln("Remote values updated\r").await?;
+                        writer.writeln("Remote values updated").await?;
                     }
                     "override" => {
                         // we expect at least 1 argument: minutes to activate override
                         let args = parsed.args;
                         if args.is_empty() {
                             writer
-                                .write_error("override command requires at least 1 argument (duration in minutes)\r")
+                                .write_error("override command requires at least 1 argument (duration in minutes)\n")
                                 .await?;
                             continue;
                         }
@@ -237,7 +222,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             Ok(v) => v,
                             Err(_) => {
                                 writer
-                                    .write_error("Failed to parse duration argument\r")
+                                    .write_error("Failed to parse duration argument\n")
                                     .await?;
                                 continue;
                             }
@@ -255,7 +240,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                 }
                                 Err(_) => {
                                     writer
-                                        .write_error("Failed to parse vl_soll argument\r")
+                                        .write_error("Failed to parse vl_soll argument\n")
                                         .await?;
                                     continue;
                                 }
@@ -272,7 +257,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                 }
                                 _ => {
                                     writer
-                                        .write_error("Failed to parse pump_onoff argument\r")
+                                        .write_error("Failed to parse pump_onoff argument\n")
                                         .await?;
                                     continue;
                                 }
@@ -296,7 +281,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             .writeln(
                                 &heapless::format!(
                                     128;
-                                    "Manual override set for {} minutes\r",
+                                    "Manual override set for {} minutes",
                                     if duration_mins == 0 {
                                         0
                                     } else {
@@ -309,27 +294,32 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                     }
                     "info" => {
                         let now = esp_hal::time::Instant::now();
-                        writer.writeln("System Information:\r").await?;
-                        writer.writeln(" Device: esp-junkers-bm1\r").await?;
+                        writer.writeln("System Information:").await?;
+                        writer.writeln(" Device: esp-junkers-bm1").await?;
                         // add heap info:
                         {
                             let free_heap = esp_alloc::HEAP.free();
 
                             writer
                                 .write_info(
-                                    &heapless::format!(128; " Free heap: {} bytes\r\n", free_heap)
+                                    &heapless::format!(128; " Free heap: {} bytes\n", free_heap)
                                         .unwrap_or_default(),
                                 )
                                 .await?;
                             let heap_stats = MyHeapStats(esp_alloc::HEAP.stats());
                             writer
                                 .write_info(
-                                    &heapless::format!(512; " Heap stats: {}\r\n", heap_stats)
+                                    &heapless::format!(512; " Heap stats: {}\n", heap_stats)
                                         .unwrap_or(
-                                            heapless::format!(512;"failed to convert\r\n").unwrap(),
+                                            heapless::format!(512;"failed to convert\n").unwrap(),
                                         ),
                                 )
                                 .await?;
+                        }
+                        // add stack info
+                        {
+                            // not available in esp-idf-hal? TODO Could use "flip-link" esp_hal feature (but that panics only on overwrite)
+                            //uxTaskGetStackHighWaterMark()
                         }
                         // level shifter output enabled:
                         {
@@ -337,7 +327,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             let oe = OUTPUT_ENABLE.load(core::sync::atomic::Ordering::Relaxed);
                             if oe {
                                 writer
-                                    .write_warning(" WARNING: Level shifter output is ENABLED!\r\n")
+                                    .write_warning(" WARNING: Level shifter output is ENABLED!\n")
                                     .await?;
                             }
                         }
@@ -360,7 +350,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                     .write_info(
                                         &heapless::format!(
                                             512;
-                                            " Last boiler state update: {}s ago\r\n  {:?}\r\n",
+                                            " Last boiler state update: {}s ago\n  {:?}\n",
                                             age.as_secs(),
                                             boiler_state
                                         )
@@ -368,9 +358,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                     )
                                     .await?;
                             } else {
-                                writer
-                                    .write_warning(" No boiler state available\r\n")
-                                    .await?;
+                                writer.write_warning(" No boiler state available\n").await?;
                             }
                         }
                         // current homematic DEVICES:
@@ -381,11 +369,11 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                 alloc::vec::Vec::new();
                             DEVICES.lock(|devices| {
                                 let devices = devices.borrow();
-                                device_info_str = heapless::format!(64; " Homematic devices: {}\r\n", devices.len())
+                                device_info_str = heapless::format!(64; " Homematic devices: {}\n", devices.len())
                                         .unwrap_or_default();
                                 for device in devices.iter() {
                                     let info_str = heapless::format!(128;
-                                        "   '{}': {}/{}C, valve: {}, {}\r\n",
+                                        "   '{}': {}/{}C, valve: {}, {}\n",
                                         device.label,
                                         device.valve_act_temp,
                                         device.set_point_temp,
@@ -419,7 +407,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             writer
                                 .write_info(
                                     &heapless::format!(256;
-                                        " Remote settings:\r\n  Power: {}\r\n  VL_SOLL2: {} ({}°C)\r\n  WW_SOLL2: {} ({}°C)\r\n  STOP_PUMP: {}\r\n  DUMMY1: {}\r\n  DUMMY2: {}\r\n",
+                                        " Remote settings:\n  Power: {}\n  VL_SOLL2: {} ({}°C)\n  WW_SOLL2: {} ({}°C)\n  STOP_PUMP: {}\n  DUMMY1: {}\n  DUMMY2: {}\n",
                                         power, vl_soll2, vl_soll2 as f32 * 0.5, ww_soll2, ww_soll2 as f32 * 0.5, stop_pump, dummy1, dummy2
                                     )
                                     .unwrap_or_default(),
@@ -432,12 +420,10 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             let mut msg: heapless::String<64> = heapless::String::new();
                             msg.push_str("Unknown command: '").unwrap();
                             msg.push_str(parsed.name()).unwrap(); // TODO!
-                            msg.push_str("'\r\n").unwrap();
+                            msg.push_str("'\n").unwrap();
                             writer.write_error(&msg).await?;
                         }
-                        writer
-                            .writeln("Type 'help' for available commands\r")
-                            .await?;
+                        writer.writeln("Type 'help' for available commands").await?;
                     }
                 }
             }
@@ -445,7 +431,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                 // TODO seems to lead to busy loop in read_line / WDG reset! -> fix/provide PR!
                 info!("Console client disconnected (read error)");
                 Timer::after(Duration::from_secs(5)).await;
-                // writer.write_error("Error reading line\r\n").await?;
+                // writer.write_error("Error reading line\n").await?;
                 return Ok(ExitReason::Disconnected);
             }
         }
