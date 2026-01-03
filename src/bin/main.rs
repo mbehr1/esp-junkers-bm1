@@ -668,6 +668,41 @@ async fn cloud_connection_task(
                                                 }
                                             }
                                             "clients" | "groups" => {}
+                                            "errorCode" => {
+                                                // print error as string:
+                                                let mut value = field.value();
+                                                match value.kind() {
+                                                    Ok(core_json::Type::String) => {
+                                                        if let Ok(err_str_it) = value.to_str() {
+                                                            let err_str: heapless::String<1024> =
+                                                                err_str_it
+                                                                    .filter_map(|k| k.ok())
+                                                                    .collect();
+                                                            warn!(
+                                                                "errorCode in REST response: '{}'",
+                                                                err_str
+                                                            );
+                                                        }
+                                                    }
+                                                    Ok(core_json::Type::Number) => {
+                                                        if let Some(err_num) = value
+                                                            .to_number()
+                                                            .ok()
+                                                            .and_then(|n| n.i64())
+                                                        {
+                                                            warn!(
+                                                                "errorCode in REST response: {}",
+                                                                err_num
+                                                            );
+                                                        }
+                                                    }
+                                                    _ => {
+                                                        warn!(
+                                                            "errorCode in REST response with unexpected type!"
+                                                        );
+                                                    }
+                                                }
+                                            }
                                             _ => {
                                                 // clients, groups
                                                 warn!("Ignoring field key: {}", key);
