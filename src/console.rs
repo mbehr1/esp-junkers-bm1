@@ -125,6 +125,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         writer
                             .writeln("  set_ww_soll2 - Set remote WW_SOLL2 value. Args: <ww_soll2>")
                             .await?;
+                        writer.writeln("  STACK_TEST - Dangerous! Use amount of stack to be able to determine how much is available. Args: [amount in 1kb]. If no arg is used, it will consume all in 1k increments.").await?;
                     }
                     "exit" => {
                         writer.writeln("Exiting console...").await?;
@@ -309,6 +310,23 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         let now = esp_hal::time::Instant::now();
                         writer.writeln("System Information:").await?;
                         writer.writeln(" Device: esp-junkers-bm1").await?;
+                        // print up-time:
+                        {
+                            let up_secs = now.duration_since_epoch().as_secs();
+                            let hours = up_secs / 3600;
+                            let mins = (up_secs % 3600) / 60;
+                            let secs = up_secs % 60;
+                            writer
+                                .write_info(
+                                    &heapless::format!(
+                                        128;
+                                        " Uptime: {}h {}m {}s\n",
+                                        hours, mins, secs
+                                    )
+                                    .unwrap_or_default(),
+                                )
+                                .await?;
+                        }
                         // add heap info:
                         {
                             let free_heap = esp_alloc::HEAP.free();
@@ -439,6 +457,28 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                                 .await?;
                         }
                     }
+                    "STACK_TEST" => {
+                        let args = &parsed.args;
+                        let mut amount: usize = usize::MAX;
+                        if args.len() >= 1 {
+                            match args[0].parse::<usize>() {
+                                Ok(v) => {
+                                    amount = v;
+                                }
+                                Err(_) => {
+                                    writer
+                                        .write_error("Failed to parse amount argument\n")
+                                        .await?;
+                                    continue;
+                                }
+                            }
+                        }
+                        writer
+                            .writeln("Starting STACK_TEST (this may take a while)...")
+                            .await?;
+                        consume_stack(amount);
+                        writer.writeln("STACK_TEST completed").await?;
+                    }
                     _ => {
                         {
                             let mut msg: heapless::String<64> = heapless::String::new();
@@ -461,6 +501,27 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
         }
     }
     Ok(ExitReason::Exit)
+}
+
+fn consume_stack(chunks: usize) -> usize {
+    // create a large array on the stack
+    // do something with it to avoid optimization
+    if chunks == 0 {
+        0
+    } else {
+        const CHUNK_SIZE: usize = 1024; // 1k
+        warn!("Consuming {}/{} bytes of stack...", CHUNK_SIZE, chunks);
+        // delay a bit to allow defmt to flush
+        // we need to do it here by busy looping as we are on stack already
+        let wait_till = esp_hal::time::Instant::now() + esp_hal::time::Duration::from_millis(10);
+        while esp_hal::time::Instant::now() < wait_till {}
+
+        let buffer: [u8; CHUNK_SIZE] = [0u8; CHUNK_SIZE];
+        let used = CHUNK_SIZE + consume_stack(chunks.saturating_sub(1));
+        let sum: u8 = buffer.iter().sum();
+        core::hint::black_box(sum);
+        used
+    }
 }
 
 struct MyHeapStats(esp_alloc::HeapStats);

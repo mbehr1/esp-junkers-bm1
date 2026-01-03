@@ -178,7 +178,12 @@ async fn main(spawner: Spawner) -> ! {
     );
     wdt.set_timeout(
         esp_hal::rtc_cntl::RwdtStage::Stage3,
-        esp_hal::time::Duration::from_secs(10),
+        // use just 2s timeout for local_test builds:
+        if cfg!(feature = "local_test") {
+            esp_hal::time::Duration::from_secs(2)
+        } else {
+            esp_hal::time::Duration::from_secs(10)
+        },
     ); // 2s timeout for final stage
     wdt.enable();
 
