@@ -1,9 +1,11 @@
 /*
 TODOs:
+[] add fallback if devices are stalled / no data received for a long time
+[] add summer/winter mode (e.g. disable heating circuit in summer)
 [] add check for cyclic call (e.g. every second and skip if called faster)
 [] implement regulator logic (missing distance to target, outside temp)
 [] implement protection mechanism (e.g. if vl_temp2 > 75C)
-[] add manual override
+[x] add manual override
 */
 
 use crate::{
@@ -18,7 +20,6 @@ use embassy_time::Instant;
 /// manual override of vl_soll2 and pump_onoff
 /// if set to Some((vl_soll2, pump_onoff)), use these values instead
 /// None means automatic regulation
-//pub static MANUAL_VL_SOLL2:
 pub struct ManualOverride {
     pub vl_soll2: Option<u8>,     // vl_soll2 in 0.5 degree C steps
     pub pump_onoff: Option<bool>, // true = pump on, false = pump off

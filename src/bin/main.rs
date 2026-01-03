@@ -1,5 +1,5 @@
 // Todos:
-// [] add regulator for remote target values
+// [x] add regulator for remote target values
 // [] add console commands for i2c read/write of pcf8570 ram
 // [x] add i2c slave device emulating the junkers bm1 pcf8570 ram
 // [x] add homematic support
@@ -553,8 +553,8 @@ async fn cloud_connection_task(
         );
         info!("Heap stats after TLS: {:?}", esp_alloc::HEAP.stats());
 
-        let url_rest: RefCell<Option<heapless::String<64>>> = RefCell::new(None);
-        let url_websocket: RefCell<Option<heapless::String<64>>> = RefCell::new(None);
+        let url_rest: RefCell<Option<alloc::string::String>> = RefCell::new(None);
+        let url_websocket: RefCell<Option<alloc::string::String>> = RefCell::new(None);
 
         let process_gethost_response = |code: reqwless::response::StatusCode, body: &mut [u8]| {
             info!("Processing getHost response with status code {}:", code);
@@ -569,18 +569,17 @@ async fn cloud_connection_task(
                 Ok((resp, _consumed)) => {
                     //info!("Parsed JSON response, consumed {} bytes", consumed);
                     info!("urlREST: {}", resp.url_rest);
-                    *url_rest.borrow_mut() = heapless::String::try_from(resp.url_rest).ok();
+                    *url_rest.borrow_mut() = alloc::string::String::try_from(resp.url_rest).ok();
                     info!("urlWebSocket: {}", resp.url_websocket);
                     *url_websocket.borrow_mut() =
-                        heapless::String::try_from(resp.url_websocket).ok();
+                        alloc::string::String::try_from(resp.url_websocket).ok();
                     // replace wss: with https:
                     if let Some(ref mut url_ws) = *url_websocket.borrow_mut()
                         && url_ws.starts_with("wss:")
                     {
-                        let https_url = heapless::format!(64; "https:{}", &url_ws.as_str()[4..])
-                            .unwrap_or_default();
+                        let https_url = alloc::format!("https:{}", &url_ws.as_str()[4..]);
                         *url_ws = https_url;
-                        info!("Converted urlWebSocket to HTTPS URL: {}", url_ws);
+                        info!("Converted urlWebSocket to HTTPS URL: {}", url_ws.as_str());
                     }
                 }
                 Err(err) => {
@@ -622,7 +621,7 @@ async fn cloud_connection_task(
         // do we have a rest url? then open a session to that one:
         let url_rest_clone = url_rest.borrow().clone();
         if let Some(mut url) = url_rest_clone {
-            info!("Got REST URL from getHost: {}", url);
+            info!("Got REST URL from getHost: {}", url.as_str());
             let process_rest_response = |code, body: &mut [u8]| {
                 info!(
                     "Processing REST response with status code {}:, body.len(): {}",
@@ -691,8 +690,7 @@ async fn cloud_connection_task(
             };
 
             // add /hmip/home/getCurrentState
-            url.push_str("/hmip/home/getCurrentState")
-                .unwrap_or_default(); // TODO better error handling
+            url.push_str("/hmip/home/getCurrentState");
             // info!("Full REST URL for getCurrentState: {}", url);
             let _rest_res = single_https_request(
                 reqwless::request::Method::POST,

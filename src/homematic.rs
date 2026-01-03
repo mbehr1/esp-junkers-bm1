@@ -659,7 +659,7 @@ where
             );
             let mut request = request.headers(headers).body(body);
             //info!("HTTP request prepared, sending...");
-            let mut rx_buffer = [0_u8; (100 * 1024)]; // TODO reduce size!!!
+            let mut rx_buffer = [0_u8; (90 * 1024)]; // TODO reduce size!!! But the json is typically 53kb... Should refactor to use core-json async and then process sequentially
             let response = request.send(&mut rx_buffer).await?;
             info!(
                 "HTTP request sent, response status: {}, content_length: {}",
@@ -669,7 +669,7 @@ where
             // info!("HTTP response: {}", response);
             // we might want to set our clock based on the Date: header in the response!
 
-            // todo process only if http 200, content length reasonably small (<1kb), ...
+            // todo process only if http 200, content length reasonably small (<90kb), ...
             let code = response.status;
             if let Ok(body) = response.body().read_to_end().await {
                 process_response_cb(code, body);

@@ -382,7 +382,7 @@ where
         info!("Read {} bytes of post-segment data", read);
         if read > 32 && read <= 32 + 16 {
             // 1 byte checksum follows that is 16 byte padded
-            // todo now verify crc? sanity checks?
+            // now verify crc? sanity checks? (for now we do rely only on sha256)
             write_flash(
                 &mut next_app_partition,
                 &data_buf.as_mut_slice()[..read],
