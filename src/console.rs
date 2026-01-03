@@ -1,4 +1,4 @@
-use defmt::info;
+use defmt::{info, warn};
 use embassy_net::{IpListenEndpoint, Stack, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
@@ -117,6 +117,9 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         writer
                             .writeln("  toggle-output - Toggle level shifter output")
                             .await?;
+                        writer
+                            .writeln("  toggle-homematic - Toggle homematic connections on/off")
+                            .await?;
                         writer.writeln("  override - Set manual override. Args: <mins> (0 = off), [vl_soll (<0 to ignore)] [pump_onoff]").await?;
                         writer.writeln("  set_remote - Set static remote values. Args: <power> <dummy1> <dummy2>").await?;
                         writer
@@ -138,6 +141,16 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                             writer.writeln("Level shifter output ENABLED").await?;
                         } else {
                             writer.writeln("Level shifter output DISABLED").await?;
+                        }
+                    }
+                    "toggle-homematic" => {
+                        use crate::homematic::HMIP_CONNECTIONS_STOP;
+                        let old =
+                            HMIP_CONNECTIONS_STOP.fetch_not(core::sync::atomic::Ordering::Relaxed);
+                        if old {
+                            writer.writeln("Homematic connections ENABLED").await?;
+                        } else {
+                            writer.writeln("Homematic connections DISABLED").await?;
                         }
                     }
                     "set_ww_soll2" => {
@@ -320,6 +333,17 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         {
                             // not available in esp-idf-hal? TODO Could use "flip-link" esp_hal feature (but that panics only on overwrite)
                             //uxTaskGetStackHighWaterMark()
+                        }
+                        // homematic stopped?
+                        {
+                            use crate::homematic::HMIP_CONNECTIONS_STOP;
+                            let stopped =
+                                HMIP_CONNECTIONS_STOP.load(core::sync::atomic::Ordering::Relaxed);
+                            if stopped {
+                                writer
+                                    .write_warning(" WARNING: Homematic connections stopped!\n")
+                                    .await?;
+                            }
                         }
                         // level shifter output enabled:
                         {

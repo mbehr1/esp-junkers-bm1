@@ -35,8 +35,8 @@ use esp_junkers_bm1::{
     console::console_task,
     defmt_via_tcp::{self, log_serve_task},
     homematic::{
-        HmIpGetHostResponse, TIMESTAMP_LAST_HMIP_UPDATE, json_process_device, json_process_home,
-        single_https_request, websocket_connection,
+        HMIP_CONNECTIONS_STOP, HmIpGetHostResponse, TIMESTAMP_LAST_HMIP_UPDATE,
+        json_process_device, json_process_home, single_https_request, websocket_connection,
     },
     i2c::{BOILER_STATE, BoilerState, REMOTE_VL_SOLL2, i2c_task},
     ota::ota_task,
@@ -522,6 +522,7 @@ async fn cloud_connection_task(
         loop {
             if stack.is_link_up()
                 && let Some(config) = stack.config_v4()
+                && !HMIP_CONNECTIONS_STOP.load(core::sync::atomic::Ordering::Relaxed)
             {
                 info!("CC: network ready with IP: {:?}", config.address);
                 break;
@@ -685,7 +686,8 @@ async fn cloud_connection_task(
             };
 
             // add /hmip/home/getCurrentState
-            url.push_str("/hmip/home/getCurrentState").unwrap();
+            url.push_str("/hmip/home/getCurrentState")
+                .unwrap_or_default(); // TODO better error handling
             // info!("Full REST URL for getCurrentState: {}", url);
             let _rest_res = single_https_request(
                 reqwless::request::Method::POST,

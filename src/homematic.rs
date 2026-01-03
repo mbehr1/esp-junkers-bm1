@@ -1,5 +1,5 @@
 use base64::prelude::*;
-use core::cell::RefCell;
+use core::{cell::RefCell, sync::atomic::AtomicBool};
 use defmt::{info, warn};
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
@@ -51,6 +51,9 @@ impl defmt::Format for HeatingThermostat {
         )
     }
 }
+
+// stop any pending homematic connections, avoid creating new ones
+pub static HMIP_CONNECTIONS_STOP: AtomicBool = AtomicBool::new(false);
 
 // list of devices
 pub static DEVICES: Mutex<CriticalSectionRawMutex, RefCell<heapless::Vec<HeatingThermostat, 6>>> =
@@ -584,6 +587,10 @@ where
                             "Did not receive pong for last pings (sent {}, received last {}), closing connection",
                             pings_sent, pongs_rcvd_last_ping
                         );
+                        break;
+                    }
+                    if HMIP_CONNECTIONS_STOP.load(core::sync::atomic::Ordering::Relaxed) {
+                        warn!("HMIP_CONNECTIONS_STOP set, closing websocket connection");
                         break;
                     }
                     // send a ping
