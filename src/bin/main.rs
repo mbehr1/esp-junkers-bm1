@@ -569,10 +569,17 @@ async fn cloud_connection_task(
                 Ok((resp, _consumed)) => {
                     //info!("Parsed JSON response, consumed {} bytes", consumed);
                     info!("urlREST: {}", resp.url_rest);
-                    *url_rest.borrow_mut() = alloc::string::String::try_from(resp.url_rest).ok();
+                    *url_rest.borrow_mut() = if resp.url_rest.is_empty() {
+                        None
+                    } else {
+                        Some(alloc::string::String::from(resp.url_rest))
+                    };
                     info!("urlWebSocket: {}", resp.url_websocket);
-                    *url_websocket.borrow_mut() =
-                        alloc::string::String::try_from(resp.url_websocket).ok();
+                    *url_websocket.borrow_mut() = if resp.url_websocket.is_empty() {
+                        None
+                    } else {
+                        Some(alloc::string::String::from(resp.url_websocket))
+                    };
                     // replace wss: with https:
                     if let Some(ref mut url_ws) = *url_websocket.borrow_mut()
                         && url_ws.starts_with("wss:")

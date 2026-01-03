@@ -460,7 +460,7 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                     "STACK_TEST" => {
                         let args = &parsed.args;
                         let mut amount: usize = usize::MAX;
-                        if args.len() >= 1 {
+                        if !args.is_empty() {
                             match args[0].parse::<usize>() {
                                 Ok(v) => {
                                     amount = v;
