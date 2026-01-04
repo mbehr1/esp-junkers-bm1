@@ -35,7 +35,7 @@ use esp_junkers_bm1::{
     console::console_task,
     defmt_via_tcp::{self, log_serve_task},
     homematic::{
-        HMIP_CONNECTIONS_STOP, HmIpGetHostResponse, TIMESTAMP_LAST_HMIP_UPDATE,
+        HMIP_CONNECTIONS_STOP, HmIpGetHostResponse, RTC, TIMESTAMP_LAST_HMIP_UPDATE,
         json_process_device, json_process_home, single_https_request, websocket_connection,
     },
     i2c::{BOILER_STATE, BoilerState, REMOTE_VL_SOLL2, i2c_task},
@@ -158,25 +158,24 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // configure watchdog (Rwdt)
-    let rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
-    let mut wdt = rtc.rwdt;
-    wdt.set_stage_action(
+    let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
+    rtc.rwdt.set_stage_action(
         esp_hal::rtc_cntl::RwdtStage::Stage0,
         esp_hal::rtc_cntl::RwdtStageAction::Off,
     );
-    wdt.set_stage_action(
+    rtc.rwdt.set_stage_action(
         esp_hal::rtc_cntl::RwdtStage::Stage1,
         esp_hal::rtc_cntl::RwdtStageAction::Off,
     );
-    wdt.set_stage_action(
+    rtc.rwdt.set_stage_action(
         esp_hal::rtc_cntl::RwdtStage::Stage2,
         esp_hal::rtc_cntl::RwdtStageAction::Off,
     );
-    wdt.set_stage_action(
+    rtc.rwdt.set_stage_action(
         esp_hal::rtc_cntl::RwdtStage::Stage3,
         esp_hal::rtc_cntl::RwdtStageAction::ResetSystem,
     );
-    wdt.set_timeout(
+    rtc.rwdt.set_timeout(
         esp_hal::rtc_cntl::RwdtStage::Stage3,
         // use just 2s timeout for local_test builds:
         if cfg!(feature = "local_test") {
@@ -185,7 +184,12 @@ async fn main(spawner: Spawner) -> ! {
             esp_hal::time::Duration::from_secs(10)
         },
     ); // 2s timeout for final stage
-    wdt.enable();
+    rtc.rwdt.enable();
+
+    // store rtc in global mutex
+    RTC.lock(|rtc_cell| {
+        *rtc_cell.borrow_mut() = Some(rtc);
+    });
 
     // sleep 1s (to smoothen peak current)
     Timer::after(Duration::from_millis(1000)).await;
@@ -304,7 +308,12 @@ async fn main(spawner: Spawner) -> ! {
     let mut last_boiler_state: Option<BoilerState> = None;
 
     loop {
-        wdt.feed(); // feed it every main loop iteration
+        // feed the watchdog
+        RTC.lock(|rtc_cell| {
+            if let Some(rtc) = rtc_cell.borrow_mut().as_mut() {
+                rtc.rwdt.feed();
+            }
+        });
 
         // check for wifi link state changes
         let link_state = stack.is_link_up();
@@ -824,21 +833,33 @@ async fn cloud_connection_task(
                                             //info!("  timestamp (ms): {}", timestamp_ms);
                                             let timestamp =
                                                 Timestamp::from_millisecond(timestamp_ms).ok();
+                                            if let Some(realtime) = timestamp.as_ref() {
+                                                let old_current_time_us = RTC.lock(|rtc| {
+                                                    if let Some(rtc) = rtc.borrow_mut().as_mut() {
+                                                        let old_current_time_us =
+                                                            rtc.current_time_us();
+                                                        rtc.set_current_time_us(
+                                                            realtime.as_microsecond() as u64,
+                                                        );
+                                                        Some(old_current_time_us)
+                                                    } else {
+                                                        None
+                                                    }
+                                                });
+                                                info!(
+                                                    "  Set current time '{}' (diff {} us)",
+                                                    alloc::string::ToString::to_string(&realtime)
+                                                        .as_str(),
+                                                    // old_current_time_us,
+                                                    realtime.as_microsecond()
+                                                        - old_current_time_us.unwrap_or(0) as i64
+                                                );
+                                            }
                                             // replace TIMESTAMP_LAST_HMIP_UPDATE
                                             TIMESTAMP_LAST_HMIP_UPDATE.lock(|tsp| {
                                                 *tsp.borrow_mut() = timestamp;
                                             });
                                         }
-                                        /*
-                                        let time =
-                                            Timestamp::from_millisecond(timestamp.unwrap_or(0))
-                                                //.and_then(|t| Ok(t/* .to_zoned(TZ.clone())*/.strftime("%y%m%d %T"))).unwrap();
-                                                .and_then(|t| {
-                                                    Ok(t /* .to_zoned(TZ.clone())*/
-                                                        .to_string())
-                                                })
-                                                .unwrap();
-                                        info!("  timestamp: {}", &time.as_str());*/
                                     }
                                     "origin" | "accessPointId" => {}
                                     _ => {

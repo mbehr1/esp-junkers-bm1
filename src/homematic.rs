@@ -1,3 +1,5 @@
+extern crate alloc;
+use alloc::string::ToString;
 use base64::prelude::*;
 use core::{cell::RefCell, sync::atomic::AtomicBool};
 use defmt::{info, warn};
@@ -66,6 +68,9 @@ pub static TIMESTAMP_LAST_HMIP_UPDATE: Mutex<
     CriticalSectionRawMutex,
     RefCell<Option<jiff::Timestamp>>,
 > = Mutex::new(RefCell::new(None));
+
+pub static RTC: Mutex<CriticalSectionRawMutex, RefCell<Option<esp_hal::rtc_cntl::Rtc>>> =
+    Mutex::new(RefCell::new(None));
 
 #[derive(Deserialize, Debug)]
 pub struct HmIpGetHostResponse<'a> {
@@ -398,6 +403,7 @@ where
             let mut rx_buffer = [0_u8; (16 * 1024)];
             let response = request.send(&mut rx_buffer).await.unwrap();
             {
+                let now = Instant::now();
                 let headers = &response
                     .headers()
                     .filter(|(k, _)| !k.is_empty())
@@ -409,6 +415,37 @@ where
                     response.content_length.unwrap_or(0),
                     headers
                 );
+                // use "Date" header to set our realtime clock:
+                for (k, v) in headers.iter() {
+                    if *k == "Date" {
+                        // info!(" Websocket server Date header: {}", v);
+                        // parse date string and set realtime clock, e.g 'Sun, 04 Jan 2026 17:27:35 GMT', seems to be RFC7131? (or RFS7231?)
+                        // might fit for RFC2822 as well
+                        if let Ok(realtime) = jiff::fmt::rfc2822::parse(v) {
+                            // current time from Rtc::
+                            let old_current_time_us = RTC.lock(|rtc| {
+                                if let Some(rtc) = rtc.borrow_mut().as_mut() {
+                                    let old_current_time_us = rtc.current_time_us();
+                                    rtc.set_current_time_us(
+                                        realtime.timestamp().as_microsecond() as u64
+                                    );
+                                    Some(old_current_time_us)
+                                } else {
+                                    None
+                                }
+                            });
+                            info!(
+                                "  Set current time '{}' @ monotonic clock {} (diff {} us)",
+                                realtime.to_string().as_str(),
+                                now,
+                                // old_current_time_us,
+                                realtime.timestamp().as_microsecond()
+                                    - old_current_time_us.unwrap_or(0) as i64
+                            );
+                        }
+                        break;
+                    }
+                }
             }
             // we expect a status code 101 (and no body)
             if let Ok(body) = response.body().read_to_end().await

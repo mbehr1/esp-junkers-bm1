@@ -4,7 +4,7 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
 use nostd_interactive_terminal::prelude::*;
 
-use crate::regulator::MANUAL_OVERRIDE;
+use crate::{homematic::RTC, regulator::MANUAL_OVERRIDE};
 
 extern crate alloc;
 
@@ -310,18 +310,29 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         let now = esp_hal::time::Instant::now();
                         writer.writeln("System Information:").await?;
                         writer.writeln(" Device: esp-junkers-bm1").await?;
-                        // print up-time:
+                        // print up-time and current time from RTC:
                         {
                             let up_secs = now.duration_since_epoch().as_secs();
                             let hours = up_secs / 3600;
                             let mins = (up_secs % 3600) / 60;
                             let secs = up_secs % 60;
+                            let current_time = RTC
+                                .lock(|rtc| rtc.borrow().as_ref().map(|rtc| rtc.current_time_us()));
+                            let current_time_str = if let Some(ct_us) = current_time {
+                                if let Ok(ct) = jiff::Timestamp::from_microsecond(ct_us as i64) {
+                                    alloc::string::ToString::to_string(&ct)
+                                } else {
+                                    alloc::string::ToString::to_string(&"N/A")
+                                }
+                            } else {
+                                alloc::string::ToString::to_string(&"N/A")
+                            };
                             writer
                                 .write_info(
                                     &heapless::format!(
                                         128;
-                                        " Uptime: {}h {}m {}s\n",
-                                        hours, mins, secs
+                                        " Uptime: {}h {}m {}s, current time: {}\n",
+                                        hours, mins, secs, current_time_str.as_str()
                                     )
                                     .unwrap_or_default(),
                                 )
@@ -349,8 +360,19 @@ async fn handle_client(socket: &mut TcpSocket<'_>) -> Result<ExitReason, embassy
                         }
                         // add stack info
                         {
-                            // not available in esp-idf-hal? TODO Could use "flip-link" esp_hal feature (but that panics only on overwrite)
-                            //uxTaskGetStackHighWaterMark()
+                            // show stack size as distance of _stack_end_cpu0 and start_start_cpu0
+                            // and compare it to current stack pointer
+                            let (stack_size, stack_used) = stack_info();
+                            writer
+                                .write_info(
+                                    &heapless::format!(
+                                        256;
+                                        " Stack size: {} bytes, used: {} bytes\n",
+                                        stack_size, stack_used
+                                    )
+                                    .unwrap_or_default(),
+                                )
+                                .await?;
                         }
                         // homematic stopped?
                         {
@@ -509,8 +531,12 @@ fn consume_stack(chunks: usize) -> usize {
     if chunks == 0 {
         0
     } else {
-        const CHUNK_SIZE: usize = 1024; // 1k
-        warn!("Consuming {}/{} bytes of stack...", CHUNK_SIZE, chunks);
+        const CHUNK_SIZE: usize = 1024; // 1k, we do seem to consume 1088 bytes per iteration, so 1088-1024 = 64 bytes overhead (stack frame?)
+        let stack_info = stack_info();
+        warn!(
+            "Consuming {}/{} bytes of stack {}/{}...",
+            CHUNK_SIZE, chunks, stack_info.0, stack_info.1
+        );
         // delay a bit to allow defmt to flush
         // we need to do it here by busy looping as we are on stack already
         let wait_till = esp_hal::time::Instant::now() + esp_hal::time::Duration::from_millis(10);
@@ -539,4 +565,20 @@ impl core::fmt::Display for MyHeapStats {
         }
         Ok(())
     }
+}
+
+fn stack_info() -> (usize, usize) {
+    unsafe extern "C" {
+        static mut _stack_start_cpu0: u8; // ptr to start of stack
+        static mut _stack_end_cpu0: u8; // ptr to end of stack
+    }
+    let sp: usize;
+    unsafe {
+        core::arch::asm!("mv {0}, sp", out(reg) sp, options(nomem, nostack),);
+    }
+    let stack_start = core::ptr::addr_of!(_stack_start_cpu0) as usize;
+    let stack_end = core::ptr::addr_of!(_stack_end_cpu0) as usize;
+    let stack_size = stack_start.saturating_sub(stack_end);
+    let stack_used = stack_start.saturating_sub(sp);
+    (stack_size, stack_used)
 }

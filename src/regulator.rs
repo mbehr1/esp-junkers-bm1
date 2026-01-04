@@ -55,6 +55,10 @@ pub fn regulator_tick() {
     let mut pump_onoff = false;
     let mut vl_soll2 = 10 * 2u8; // default 10C
 
+    // timestamp from last homematic update via websocket: TIMESTAMP_LAST_HMIP_UPDATE
+    // compare this towards the device.last_update timestamps to detect stalled devices
+    // compare this towards the "real time" to detect no updates at all
+
     // gather: min, max, avg valve positions
     if let Some((_valve_pos_min, valve_pos_max, valve_pos_avg)) = DEVICES.lock(|devices| {
         let mut min = f32::MAX;
