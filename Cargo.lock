@@ -2260,8 +2260,7 @@ dependencies = [
 [[package]]
 name = "nostd-interactive-terminal"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4acb7a8526292a99318d4c5ee878b521c1032eaed20b0bdf041f24120f5fdbe9"
+source = "git+https://github.com/mbehr1/nostd-interactive-terminal?rev=6609d56#6609d563c75273c731b1b89039b6b242327caf65"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.6.2",

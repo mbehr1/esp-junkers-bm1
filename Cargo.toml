@@ -43,7 +43,7 @@ esp-rtos = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave
 ] }
 esp-storage = { git = "https://github.com/mbehr1/esp-hal", branch = "feat/i2c_slave", features = ["defmt", "esp32c6"] }
 heapless = {version = "0.9.2", features = ["defmt"] }
-nostd-interactive-terminal = { version="0.1.1", features=["ansi-support"] }
+nostd-interactive-terminal = { git = "https://github.com/mbehr1/nostd-interactive-terminal", rev="6609d56" , features=["ansi-support"] }
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
 rtt-target = { version = "0.6.2", features = [] } # we use our own defmt integration
 # for more networking protocol support see https://crates.io/crates/edge-net
@@ -82,7 +82,7 @@ embedded-nal-async = "0.8.0"
 embedded-websocket = {version = "0.9.4", default-features = false }
 esp-mbedtls = { version="0.1", git="https://github.com/mbehr1/esp-mbedtls", features=["esp32c6", "async"], rev="289436ff984b67139762bc97855b87d8dc41dbf8"}
 esp-mbedtls-sys = { version="0.1", git="https://github.com/mbehr1/esp-mbedtls", features=["esp32c6"], rev="289436ff984b67139762bc97855b87d8dc41dbf8"}
-jiff = {version="0.2.16", default-features = false, features = ["alloc", "static"] }
+jiff = {version="0.2.17", default-features = false, features = ["alloc", "static"] }
 rand_core       = "0.9.3"
 reqwless = { version = "0.13", default-features = false, features = ["defmt", "esp-mbedtls", "alloc"], git="https://github.com/mbehr1/reqwless", branch = "fix/defmt_esp-mbedtls"}
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
