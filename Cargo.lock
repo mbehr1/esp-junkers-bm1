@@ -2260,7 +2260,7 @@ dependencies = [
 [[package]]
 name = "nostd-interactive-terminal"
 version = "0.1.1"
-source = "git+https://github.com/mbehr1/nostd-interactive-terminal?rev=6609d56#6609d563c75273c731b1b89039b6b242327caf65"
+source = "git+https://github.com/mbehr1/nostd-interactive-terminal?rev=1696918a68f4b#1696918a68f4b812e73ad76c245235ceba2dd8eb"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.6.2",
